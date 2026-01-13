@@ -15,6 +15,10 @@ namespace MCPForUnity.Editor.Timeline.Semantics
         /// </summary>
         public string Infer(EditorEvent evt, IReadOnlyList<EditorEvent> surrounding)
         {
+            // 对于脱水事件（Payload 为 null），无法推断意图，直接返回 null
+            if (evt.Payload == null)
+                return null;
+
             return evt.Type switch
             {
                 // Asset-related intents

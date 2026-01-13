@@ -64,19 +64,36 @@ namespace MCPForUnity.Editor.Timeline.Query
                 if (contextLength > 0)
                 {
                     surrounding = new EditorEvent[contextLength];
-                    for (int j = 0; j < contextLength; j++)
+
+                    // 性能考虑：EventStore 查询通常按时间顺序追加（但 Query 返回可能为降序）。
+                    // 我们在 O(1) 检测顺序（首/末 sequence 比较），并在需要时按时间顺序填充 surrounding
+                    bool isDescending = events.Count > 1 && events[0].Sequence > events[events.Count - 1].Sequence;
+
+                    if (!isDescending)
                     {
-                        surrounding[j] = events[contextStart + j];
+                        for (int j = 0; j < contextLength; j++)
+                        {
+                            surrounding[j] = events[contextStart + j];
+                        }
+                    }
+                    else
+                    {
+                        // events 为降序（最新在前），需要按时间升序（最旧->最新）构建 surrounding
+                        // 填充方式：从 contextEnd-1 向下遍历到 contextStart，产生升序窗口
+                        for (int j = 0; j < contextLength; j++)
+                        {
+                            surrounding[j] = events[contextEnd - 1 - j];
+                        }
                     }
                 }
 
-                // 使用 surrounding 参数进行意图推断
+                // 使用 surrounding 参数进行意图推断（按时间升序）
                 var intent = _inferrer.Infer(evt, surrounding);
 
-                // 预计算所有显示缓存（避免 OnGUI 中的重复分配）
-                var displaySummary = MCPForUnity.Editor.Timeline.Query.EventSummarizer.Summarize(evt);
-                var displaySummaryLower = displaySummary.ToLower();
-                var displayTargetIdLower = evt.TargetId.ToLower();
+                // 使用 EditorEvent 的 GetSummary() 方法，它会自动处理脱水事件
+                var displaySummary = evt.GetSummary();
+                var displaySummaryLower = (displaySummary ?? string.Empty).ToLowerInvariant();
+                var displayTargetIdLower = (evt.TargetId ?? string.Empty).ToLowerInvariant();
                 var displayTime = DateTimeOffset.FromUnixTimeMilliseconds(evt.TimestampUnixMs).ToString("HH:mm:ss");
                 var displaySequence = evt.Sequence.ToString();
 
@@ -128,8 +145,10 @@ namespace MCPForUnity.Editor.Timeline.Query
                 // Use simple inference to avoid List allocation
                 var intent = _inferrer.Infer(evt, surrounding: null);
 
-                // 预计算所有显示缓存（避免 OnGUI 中的重复分配）
-                var displaySummary = MCPForUnity.Editor.Timeline.Query.EventSummarizer.Summarize(evt);
+                // 使用 EditorEvent 的 GetSummary() 方法，它会自动处理脱水事件
+                var displaySummary = evt.GetSummary();
+                var displaySummaryLower = (displaySummary ?? string.Empty).ToLowerInvariant();
+                var displayTargetIdLower = (evt.TargetId ?? string.Empty).ToLowerInvariant();
                 var displayTime = DateTimeOffset.FromUnixTimeMilliseconds(evt.TimestampUnixMs).ToString("HH:mm:ss");
                 var displaySequence = evt.Sequence.ToString();
 
@@ -147,6 +166,8 @@ namespace MCPForUnity.Editor.Timeline.Query
                     InferredIntent = intent,
                     // 设置显示缓存
                     DisplaySummary = displaySummary,
+                    DisplaySummaryLower = displaySummaryLower,
+                    DisplayTargetIdLower = displayTargetIdLower,
                     DisplayTime = displayTime,
                     DisplaySequence = displaySequence,
                     TypeColor = typeColor,

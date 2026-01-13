@@ -33,7 +33,7 @@ namespace MCPForUnity.Editor.Timeline.Query
 
         private static string SummarizeComponentAdded(EditorEvent evt)
         {
-            if (evt.Payload.TryGetValue("component_type", out var componentType))
+            if (evt.Payload != null && evt.Payload.TryGetValue("component_type", out var componentType))
             {
                 return $"Added {componentType} component to {GetGameObjectName(evt)}";
             }
@@ -42,7 +42,7 @@ namespace MCPForUnity.Editor.Timeline.Query
 
         private static string SummarizeAssetImported(EditorEvent evt)
         {
-            if (evt.Payload.TryGetValue("path", out var path))
+            if (evt.Payload != null && evt.Payload.TryGetValue("path", out var path))
             {
                 if (evt.Payload.TryGetValue("asset_type", out var assetType))
                 {
@@ -55,7 +55,7 @@ namespace MCPForUnity.Editor.Timeline.Query
 
         private static string SummarizeAssetDeleted(EditorEvent evt)
         {
-            if (evt.Payload.TryGetValue("path", out var path))
+            if (evt.Payload != null && evt.Payload.TryGetValue("path", out var path))
             {
                 return $"Deleted asset: {path}";
             }
@@ -64,7 +64,8 @@ namespace MCPForUnity.Editor.Timeline.Query
 
         private static string SummarizeAssetMoved(EditorEvent evt)
         {
-            if (evt.Payload.TryGetValue("to_path", out var toPath) &&
+            if (evt.Payload != null &&
+                evt.Payload.TryGetValue("to_path", out var toPath) &&
                 evt.Payload.TryGetValue("from_path", out var fromPath))
             {
                 return $"Moved asset from {fromPath} to {toPath}";
@@ -74,7 +75,7 @@ namespace MCPForUnity.Editor.Timeline.Query
 
         private static string SummarizePlayModeChanged(EditorEvent evt)
         {
-            if (evt.Payload.TryGetValue("state", out var state))
+            if (evt.Payload != null && evt.Payload.TryGetValue("state", out var state))
             {
                 return $"Play mode changed to {state}";
             }
@@ -83,7 +84,7 @@ namespace MCPForUnity.Editor.Timeline.Query
 
         private static string SummarizeSceneSaving(EditorEvent evt)
         {
-            if (evt.Payload.TryGetValue("scene_name", out var sceneName))
+            if (evt.Payload != null && evt.Payload.TryGetValue("scene_name", out var sceneName))
             {
                 return $"Saving scene: {sceneName}";
             }
@@ -92,7 +93,7 @@ namespace MCPForUnity.Editor.Timeline.Query
 
         private static string SummarizeSceneOpened(EditorEvent evt)
         {
-            if (evt.Payload.TryGetValue("scene_name", out var sceneName))
+            if (evt.Payload != null && evt.Payload.TryGetValue("scene_name", out var sceneName))
             {
                 return $"Opened scene: {sceneName}";
             }
@@ -102,15 +103,15 @@ namespace MCPForUnity.Editor.Timeline.Query
         private static string GetTargetName(EditorEvent evt)
         {
             // Try to get a human-readable name from payload
-            if (evt.Payload.TryGetValue("name", out var name))
+            if (evt.Payload != null && evt.Payload.TryGetValue("name", out var name))
             {
                 return name.ToString();
             }
-            if (evt.Payload.TryGetValue("game_object", out var goName))
+            if (evt.Payload != null && evt.Payload.TryGetValue("game_object", out var goName))
             {
                 return goName.ToString();
             }
-            if (evt.Payload.TryGetValue("scene_name", out var sceneName))
+            if (evt.Payload != null && evt.Payload.TryGetValue("scene_name", out var sceneName))
             {
                 return sceneName.ToString();
             }
@@ -120,7 +121,7 @@ namespace MCPForUnity.Editor.Timeline.Query
 
         private static string GetGameObjectName(EditorEvent evt)
         {
-            if (evt.Payload.TryGetValue("game_object", out var goName))
+            if (evt.Payload != null && evt.Payload.TryGetValue("game_object", out var goName))
             {
                 return goName.ToString();
             }
@@ -138,13 +139,13 @@ namespace MCPForUnity.Editor.Timeline.Query
             string propertyPath = null;
             string targetName = null;
 
-            if (evt.Payload.TryGetValue("component_type", out var compType))
+            if (evt.Payload != null && evt.Payload.TryGetValue("component_type", out var compType))
                 componentType = compType.ToString();
 
-            if (evt.Payload.TryGetValue("property_path", out var propPath))
+            if (evt.Payload != null && evt.Payload.TryGetValue("property_path", out var propPath))
                 propertyPath = propPath.ToString();
 
-            if (evt.Payload.TryGetValue("target_name", out var tgtName))
+            if (evt.Payload != null && evt.Payload.TryGetValue("target_name", out var tgtName))
                 targetName = tgtName.ToString();
 
             // Get readable values (strip quotes from JSON strings)
@@ -188,7 +189,7 @@ namespace MCPForUnity.Editor.Timeline.Query
         /// </summary>
         private static string GetReadableValue(EditorEvent evt, string key)
         {
-            if (!evt.Payload.TryGetValue(key, out var value))
+            if (evt.Payload == null || !evt.Payload.TryGetValue(key, out var value))
                 return null;
 
             string valueStr = value.ToString();
@@ -216,6 +217,9 @@ namespace MCPForUnity.Editor.Timeline.Query
         /// </summary>
         private static string SummarizeAINote(EditorEvent evt)
         {
+            if (evt.Payload == null)
+                return "AI Note";
+
             // Get the note text
             if (evt.Payload.TryGetValue("note", out var note))
             {

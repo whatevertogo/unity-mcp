@@ -23,6 +23,10 @@ namespace MCPForUnity.Editor.Timeline.Semantics
         /// </summary>
         public float Score(EditorEvent evt)
         {
+            // 对于脱水事件（Payload 为 null），使用低默认评分
+            if (evt.Payload == null)
+                return 0.1f;
+
             return evt.Type switch
             {
                 // ========== Critical (1.0) ==========
@@ -69,6 +73,7 @@ namespace MCPForUnity.Editor.Timeline.Semantics
 
         private static bool IsScript(EditorEvent e)
         {
+            if (e.Payload == null) return false;
             if (e.Payload.TryGetValue("extension", out var ext))
                 return ext.ToString() == ".cs";
             if (e.Payload.TryGetValue("type", out var type))
@@ -79,6 +84,7 @@ namespace MCPForUnity.Editor.Timeline.Semantics
 
         private static bool IsScene(EditorEvent e)
         {
+            if (e.Payload == null) return false;
             if (e.Payload.TryGetValue("extension", out var ext))
                 return ext.ToString() == ".unity";
             if (e.Payload.TryGetValue("type", out var type))
@@ -88,6 +94,7 @@ namespace MCPForUnity.Editor.Timeline.Semantics
 
         private static bool IsPrefab(EditorEvent e)
         {
+            if (e.Payload == null) return false;
             if (e.Payload.TryGetValue("extension", out var ext))
                 return ext.ToString() == ".prefab";
             if (e.Payload.TryGetValue("type", out var type))
