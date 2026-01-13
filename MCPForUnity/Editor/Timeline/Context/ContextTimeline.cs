@@ -1,6 +1,7 @@
 using UnityEditor;
 using MCPForUnity.Editor.Timeline.Core;
 using System;
+using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Timeline.Context
 {
@@ -49,7 +50,7 @@ namespace MCPForUnity.Editor.Timeline.Context
             }
             catch (System.Exception ex)
             {
-                UnityEngine.Debug.LogWarning(
+                McpLog.Warn(
                     $"[ContextTimeline] Failed to create context mapping: {ex.Message}");
             }
         }

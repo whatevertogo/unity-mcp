@@ -18,16 +18,22 @@ namespace MCPForUnity.Editor.Timeline.Core
     ///
     /// Persistence: Uses McpJobStateStore for domain reload survival.
     /// Save strategy: Deferred persistence with dirty flag + delayCall coalescing.
+    ///
+    /// Memory optimization (Pruning):
+    /// - Hot events (latest 100): Full payload retained
+    /// - Cold events (older than 100): Automatically dehydrated (payload = null)
+    /// - This reduces memory from ~10MB to <1MB for 1000 events
     /// </summary>
     public static class EventStore
     {
         private const int MaxEvents = 1000;
         private const int MaxContextMappings = 2000;
+        private const int HotEventCount = 100;  // Keep full payload for latest 100 events
         private const string StateKey = "timeline_events";
 
         // Schema version for migration support
         // Increment when breaking changes are made to the storage format
-        private const int CurrentSchemaVersion = 1;
+        private const int CurrentSchemaVersion = 2;  // Incremented for dehydration support
 
         private static readonly List<EditorEvent> _events = new();
         private static readonly List<ContextMapping> _contextMappings = new();
@@ -92,6 +98,13 @@ namespace MCPForUnity.Editor.Timeline.Core
             lock (_queryLock)
             {
                 _events.Add(evtWithSequence);
+
+                // Auto-dehydrate old events to save memory
+                // Keep latest HotEventCount events with full payload, dehydrate the rest
+                if (_events.Count > HotEventCount)
+                {
+                    DehydrateOldEvents();
+                }
 
                 // Trim oldest events if over limit (batch remove is more efficient than loop RemoveAt)
                 if (_events.Count > MaxEvents)
@@ -220,6 +233,24 @@ namespace MCPForUnity.Editor.Timeline.Core
         }
 
         /// <summary>
+        /// Dehydrate old events (beyond HotEventCount) to save memory.
+        /// This is called automatically by Record().
+        /// </summary>
+        private static void DehydrateOldEvents()
+        {
+            // Find events that need dehydration (not already dehydrated and beyond hot count)
+            for (int i = 0; i < _events.Count - HotEventCount; i++)
+            {
+                var evt = _events[i];
+                if (evt != null && !evt.IsDehydrated && evt.Payload != null)
+                {
+                    // Dehydrate the event (creates new instance with Payload = null)
+                    _events[i] = evt.Dehydrate();
+                }
+            }
+        }
+
+        /// <summary>
         /// Clear all events and context mappings (for testing).
         /// WARNING: This is destructive and cannot be undone.
         /// All timeline history and context associations will be lost.
@@ -234,6 +265,102 @@ namespace MCPForUnity.Editor.Timeline.Core
             }
             // For Clear(), save immediately (not deferred) since it's a destructive operation
             SaveToStorage();
+        }
+
+        /// <summary>
+        /// Clears all pending notifications and scheduled saves.
+        /// Call this when shutting down or reloading domains to prevent delayCall leaks.
+        /// </summary>
+        public static void ClearPendingOperations()
+        {
+            lock (_pendingNotifications)
+            {
+                _pendingNotifications.Clear();
+                _notifyScheduled = false;
+            }
+            _saveScheduled = false;
+        }
+
+        /// <summary>
+        /// Get diagnostic information about memory usage.
+        /// Useful for monitoring and debugging memory issues.
+        /// </summary>
+        public static string GetMemoryDiagnostics()
+        {
+            lock (_queryLock)
+            {
+                int totalEvents = _events.Count;
+                int hotEvents = Math.Min(totalEvents, HotEventCount);
+                int coldEvents = Math.Max(0, totalEvents - HotEventCount);
+
+                int hydratedCount = 0;
+                int dehydratedCount = 0;
+                long estimatedPayloadBytes = 0;
+
+                foreach (var evt in _events)
+                {
+                    if (evt.IsDehydrated)
+                        dehydratedCount++;
+                    else if (evt.Payload != null)
+                    {
+                        hydratedCount++;
+                        // Estimate payload size (rough approximation)
+                        estimatedPayloadBytes += EstimatePayloadSize(evt.Payload);
+                    }
+                }
+
+                // Estimate dehydrated events size (~100 bytes each)
+                long dehydratedBytes = dehydratedCount * 100;
+
+                // Total estimated size
+                long totalEstimatedBytes = estimatedPayloadBytes + dehydratedBytes;
+                double totalEstimatedMB = totalEstimatedBytes / (1024.0 * 1024.0);
+
+                return $"EventStore Memory Diagnostics:\n" +
+                       $"  Total Events: {totalEvents}/{MaxEvents}\n" +
+                       $"  Hot Events (full payload): {hotEvents}\n" +
+                       $"  Cold Events (dehydrated): {coldEvents}\n" +
+                       $"  Hydrated: {hydratedCount}\n" +
+                       $"  Dehydrated: {dehydratedCount}\n" +
+                       $"  Estimated Payload Memory: {estimatedPayloadBytes / 1024} KB\n" +
+                       $"  Total Estimated Memory: {totalEstimatedMB:F2} MB";
+            }
+        }
+
+        /// <summary>
+        /// Estimate the size of a payload in bytes.
+        /// This is a rough approximation for diagnostics.
+        /// </summary>
+        private static long EstimatePayloadSize(IReadOnlyDictionary<string, object> payload)
+        {
+            if (payload == null) return 0;
+
+            long size = 0;
+            foreach (var kvp in payload)
+            {
+                // Key string (assume average 20 chars)
+                size += kvp.Key.Length * 2;
+
+                // Value
+                if (kvp.Value is string str)
+                    size += str.Length * 2;
+                else if (kvp.Value is int)
+                    size += 4;
+                else if (kvp.Value is long)
+                    size += 8;
+                else if (kvp.Value is double)
+                    size += 8;
+                else if (kvp.Value is bool)
+                    size += 1;
+                else if (kvp.Value is IDictionary<string, object> dict)
+                    size += dict.Count * 100; // Rough estimate
+                else if (kvp.Value is System.Collections.ICollection list)
+                    size += list.Count * 50; // Rough estimate
+                else
+                    size += 50; // Unknown type
+            }
+
+            return size;
         }
 
         // ========================================================================

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Timeline.Core;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -27,6 +28,9 @@ namespace MCPForUnity.Editor.Timeline.Capture
             // Monitor hierarchy changes (with debouncing)
             EditorApplication.hierarchyChanged += OnHierarchyChanged;
 
+            // Monitor selection changes (P2.3: Selection Tracking)
+            Selection.selectionChanged += OnSelectionChanged;
+
             // Monitor play mode state changes
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
 
@@ -48,6 +52,57 @@ namespace MCPForUnity.Editor.Timeline.Capture
             };
 
             RecordEvent(EventTypes.ComponentAdded, component.GetInstanceID().ToString(), payload);
+        }
+
+        /// <summary>
+        /// Handles Selection changes (P2.3: Selection Tracking).
+        /// Records what the user is currently focusing on for AI context awareness.
+        /// </summary>
+        private static void OnSelectionChanged()
+        {
+            if (Selection.activeObject == null)
+                return;
+
+            var payload = new Dictionary<string, object>
+            {
+                ["name"] = Selection.activeObject.name,
+                ["type"] = Selection.activeObject.GetType().Name,
+                ["instance_id"] = Selection.activeObject.GetInstanceID()
+            };
+
+            // Add path for GameObject/Component selections
+            if (Selection.activeObject is GameObject go)
+            {
+                payload["path"] = GetGameObjectPath(go);
+            }
+            else if (Selection.activeObject is Component comp)
+            {
+                payload["path"] = GetGameObjectPath(comp.gameObject);
+                payload["component_type"] = comp.GetType().Name;
+            }
+
+            RecordEvent(EventTypes.SelectionChanged, Selection.activeObject.GetInstanceID().ToString(), payload);
+        }
+
+        /// <summary>
+        /// Gets the full Hierarchy path for a GameObject.
+        /// Example: "Level1/Player/Arm/Hand"
+        /// </summary>
+        private static string GetGameObjectPath(GameObject obj)
+        {
+            if (obj == null)
+                return "Unknown";
+
+            var path = obj.name;
+            var parent = obj.transform.parent;
+
+            while (parent != null)
+            {
+                path = $"{parent.name}/{path}";
+                parent = parent.parent;
+            }
+
+            return path;
         }
 
         private static void OnHierarchyChanged()
@@ -103,6 +158,14 @@ namespace MCPForUnity.Editor.Timeline.Capture
         {
             try
             {
+                // Inject VCS context into all recorded events
+                var vcsContext = VCS.VcsContextProvider.GetCurrentContext();
+                payload["vcs_context"] = vcsContext.ToDictionary();
+
+                // Inject Undo Group ID for undo_to_sequence functionality (P2.4)
+                int currentUndoGroup = Undo.GetCurrentGroup();
+                payload["undo_group"] = currentUndoGroup;
+
                 var evt = new EditorEvent(
                     sequence: 0,  // Will be assigned by EventStore.Record
                     timestampUnixMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
@@ -111,11 +174,16 @@ namespace MCPForUnity.Editor.Timeline.Capture
                     payload: payload
                 );
 
-                Core.EventStore.Record(evt);
+                // Apply sampling middleware to protect from event floods.
+                // If sampling filters this event, do not record it here.
+                if (SamplingMiddleware.ShouldRecord(evt))
+                {
+                    Core.EventStore.Record(evt);
+                }
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[UnityEventHooks] Failed to record event: {ex.Message}");
+                McpLog.Warn($"[UnityEventHooks] Failed to record event: {ex.Message}");
             }
         }
     }
@@ -133,9 +201,14 @@ namespace MCPForUnity.Editor.Timeline.Capture
             string[] movedAssets,
             string[] movedFromAssetPaths)
         {
+            // ========== Imported Assets ==========
             foreach (var assetPath in importedAssets)
             {
                 if (string.IsNullOrEmpty(assetPath)) continue;
+
+                // L1 Blacklist: Skip junk assets before creating events
+                if (!EventFilter.ShouldTrackAsset(assetPath))
+                    continue;
 
                 var payload = new Dictionary<string, object>
                 {
@@ -164,9 +237,14 @@ namespace MCPForUnity.Editor.Timeline.Capture
                 RecordEvent(EventTypes.AssetImported, assetPath, payload);
             }
 
+            // ========== Deleted Assets ==========
             foreach (var assetPath in deletedAssets)
             {
                 if (string.IsNullOrEmpty(assetPath)) continue;
+
+                // L1 Blacklist: Skip junk assets
+                if (!EventFilter.ShouldTrackAsset(assetPath))
+                    continue;
 
                 var payload = new Dictionary<string, object>
                 {
@@ -176,12 +254,17 @@ namespace MCPForUnity.Editor.Timeline.Capture
                 RecordEvent(EventTypes.AssetDeleted, assetPath, payload);
             }
 
-            // Handle moved assets
+            // ========== Moved Assets ==========
             for (int i = 0; i < movedAssets.Length; i++)
             {
                 if (string.IsNullOrEmpty(movedAssets[i])) continue;
 
                 var fromPath = i < movedFromAssetPaths.Length ? movedFromAssetPaths[i] : "";
+
+                // L1 Blacklist: Skip junk assets
+                if (!EventFilter.ShouldTrackAsset(movedAssets[i]))
+                    continue;
+
                 var payload = new Dictionary<string, object>
                 {
                     ["to_path"] = movedAssets[i],
@@ -196,6 +279,14 @@ namespace MCPForUnity.Editor.Timeline.Capture
         {
             try
             {
+                // Inject VCS context into all recorded events
+                var vcsContext = VCS.VcsContextProvider.GetCurrentContext();
+                payload["vcs_context"] = vcsContext.ToDictionary();
+
+                // Inject Undo Group ID for undo_to_sequence functionality (P2.4)
+                int currentUndoGroup = Undo.GetCurrentGroup();
+                payload["undo_group"] = currentUndoGroup;
+
                 var evt = new EditorEvent(
                     sequence: 0,
                     timestampUnixMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),

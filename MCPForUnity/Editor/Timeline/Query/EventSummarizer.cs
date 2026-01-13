@@ -11,6 +11,7 @@ namespace MCPForUnity.Editor.Timeline.Query
     {
         /// <summary>
         /// Generate a human-readable summary for an event.
+        /// P1.2: Added support for AINote events.
         /// </summary>
         public static string Summarize(EditorEvent evt)
         {
@@ -25,6 +26,7 @@ namespace MCPForUnity.Editor.Timeline.Query
                 EventTypes.PlayModeChanged => SummarizePlayModeChanged(evt),
                 EventTypes.SceneSaving => SummarizeSceneSaving(evt),
                 EventTypes.SceneOpened => SummarizeSceneOpened(evt),
+                "AINote" => SummarizeAINote(evt),  // P1.2: AI comment support
                 _ => $"{evt.Type} on {GetTargetName(evt)}"
             };
         }
@@ -206,6 +208,33 @@ namespace MCPForUnity.Editor.Timeline.Query
             }
 
             return valueStr;
+        }
+
+        /// <summary>
+        /// P1.2: Generate a human-readable summary for AI Note events.
+        /// Format: "AI Note: {note}" or "AI Note from {agent_id}: {note}"
+        /// </summary>
+        private static string SummarizeAINote(EditorEvent evt)
+        {
+            // Get the note text
+            if (evt.Payload.TryGetValue("note", out var note))
+            {
+                string noteText = note?.ToString() ?? "Empty note";
+
+                // Get agent_id if available
+                if (evt.Payload.TryGetValue("agent_id", out var agentId))
+                {
+                    string agent = agentId?.ToString();
+                    if (!string.IsNullOrEmpty(agent) && agent != "unknown")
+                    {
+                        return $"AI Note ({agent}): {noteText}";
+                    }
+                }
+
+                return $"AI Note: {noteText}";
+            }
+
+            return "AI Note";
         }
     }
 }

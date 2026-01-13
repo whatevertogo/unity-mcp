@@ -98,8 +98,8 @@ namespace MCPForUnity.Editor.Timeline.Capture
 
                 string uniqueKey = $"{globalId}:{propertyPath}";
 
-                // Get the current value
-                var currentValue = GetCurrent_valueFromUndoMod(undoMod);
+                // Get the current value (not the path)
+                var currentValue = GetCurrentValueFromUndoMod(undoMod);
 
                 // Check if we already have a pending change for this property
                 if (_pendingChanges.TryGetValue(uniqueKey, out var pending))
@@ -124,7 +124,9 @@ namespace MCPForUnity.Editor.Timeline.Capture
                     change.TargetName = target.name;
                     change.ComponentType = target.GetType().Name;
                     change.PropertyPath = propertyPath;
-                    change.StartValue = null;
+                    // Record the start value from the previous value reported by Undo system
+                    var prev = GetPreviousValueFromUndoMod(undoMod);
+                    change.StartValue = FormatPropertyValue(prev);
                     change.EndValue = FormatPropertyValue(currentValue);
                     change.PropertyType = GetPropertyTypeName(currentValue);
                     change.ChangeCount = 1;
@@ -135,6 +137,50 @@ namespace MCPForUnity.Editor.Timeline.Capture
             }
 
             return modifications;
+        }
+
+        /// <summary>
+        /// Attempts to extract the previous value from an UndoPropertyModification via reflection.
+        /// Mirrors the approach used in GetCurrentValueFromUndoMod but targets the previous value.
+        /// </summary>
+        private static object GetPreviousValueFromUndoMod(UndoPropertyModification undoMod)
+        {
+            // Try property 'previousValue' first
+            var prop = undoMod.GetType().GetProperty("previousValue");
+            if (prop != null)
+                return prop.GetValue(undoMod);
+
+            // Fallback to propertyModification.previousValue or propertyModification.valueBefore
+            var field = undoMod.GetType().GetField("propertyModification");
+            if (field != null)
+            {
+                var propMod = field.GetValue(undoMod);
+                if (propMod != null)
+                {
+                    var prevField = propMod.GetType().GetField("previousValue");
+                    if (prevField != null)
+                        return prevField.GetValue(propMod);
+
+                    // Some Unity versions use 'value' with an object that contains 'before'/'after' fields - try common names
+                    var valueField = propMod.GetType().GetField("value");
+                    if (valueField != null)
+                    {
+                        var valObj = valueField.GetValue(propMod);
+                        if (valObj != null)
+                        {
+                            var beforeProp = valObj.GetType().GetProperty("before");
+                            if (beforeProp != null)
+                                return beforeProp.GetValue(valObj);
+
+                            var beforeField = valObj.GetType().GetField("before");
+                            if (beforeField != null)
+                                return beforeField.GetValue(valObj);
+                        }
+                    }
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -179,7 +225,7 @@ namespace MCPForUnity.Editor.Timeline.Capture
         /// <summary>
         /// Extracts the current value from UndoPropertyModification.
         /// </summary>
-        private static object GetCurrent_valueFromUndoMod(UndoPropertyModification undoMod)
+        private static object GetCurrentValueFromUndoMod(UndoPropertyModification undoMod)
         {
             // Try currentValue property first
             var prop = undoMod.GetType().GetProperty("currentValue");

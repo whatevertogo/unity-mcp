@@ -19,7 +19,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 
 @mcp_for_unity_tool(
-    description="Queries the timeline of editor events with human-readable summaries. Supports semantic analysis (importance, category, intent) and context associations. This is a read-only snapshot query of the Unity editor's event history.",
+    description="Queries the timeline of editor events with human-readable summaries. Supports semantic analysis (importance, category, intent) and context associations. This is a read-only snapshot query of the Unity editor's event history. By default, only medium+ importance events are returned (filters out noise like HierarchyChanged). Use include_low_importance=true to see all events.",
     annotations=ToolAnnotations(
         title="Get Timeline",
     ),
@@ -30,6 +30,7 @@ async def get_timeline(
     since_sequence: Annotated[int | str, "Only return events after this sequence number. Use to poll for new events since last query."] | None = None,
     include_context: Annotated[bool | str, "Include context associations (default: false). Accepts true/false or 'true'/'false'."] | None = None,
     include_semantics: Annotated[bool | str, "Include importance, category, and intent analysis (default: false). Accepts true/false or 'true'/'false'."] | None = None,
+    include_low_importance: Annotated[bool | str, "Include low-importance events like HierarchyChanged (default: false). When false, only medium+ importance events are returned."] | None = None,
     source: Annotated[str, "Filter by operation source: 'ai', 'human', or 'system' (not yet supported)."] | None = None,
 ) -> dict[str, Any]:
     """
@@ -41,6 +42,14 @@ async def get_timeline(
     - type: Event type (e.g., 'create', 'modify', 'delete')
     - target: Target object identifier
     - summary: Human-readable description
+
+    L3 Semantic Whitelist (default behavior):
+    By default, only medium+ importance events are returned (importance >= 0.4).
+    This filters out low-value noise like:
+    - HierarchyChanged (0.2 importance)
+    - PlayModeChanged (0.3 importance)
+
+    To include all events, set include_low_importance=true.
 
     When include_semantics is true, also includes:
     - importance_score: Numeric importance (0-1)
@@ -63,6 +72,7 @@ async def get_timeline(
     coerced_limit = coerce_int(limit, default=50)
     include_context = coerce_bool(include_context, default=False)
     include_semantics = coerce_bool(include_semantics, default=False)
+    include_low_importance = coerce_bool(include_low_importance, default=False)  # L3: Default to filtering
 
     # Clamp limit to reasonable range
     coerced_limit = max(1, min(coerced_limit, 1000))
@@ -82,6 +92,12 @@ async def get_timeline(
 
     if include_semantics:
         params_dict["include_semantics"] = True
+
+    # L3 Semantic Whitelist: Set min_importance based on include_low_importance
+    if include_low_importance:
+        params_dict["min_importance"] = "low"  # Show all events
+    else:
+        params_dict["min_importance"] = "medium"  # Filter to medium+ (default)
 
     if source is not None:
         params_dict["source"] = source

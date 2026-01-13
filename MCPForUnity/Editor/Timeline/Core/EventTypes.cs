@@ -23,6 +23,9 @@ namespace MCPForUnity.Editor.Timeline.Core
         // Hierarchy events
         public const string HierarchyChanged = "HierarchyChanged";
 
+        // Selection events (P2.3: Selection Tracking)
+        public const string SelectionChanged = "SelectionChanged";
+
         // Play mode events
         public const string PlayModeChanged = "PlayModeChanged";
 

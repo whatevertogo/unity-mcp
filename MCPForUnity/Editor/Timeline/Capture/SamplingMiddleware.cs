@@ -29,6 +29,8 @@ namespace MCPForUnity.Editor.Timeline.Capture
 
         // State
         private static readonly Dictionary<string, PendingSample> _pendingSamples = new();
+        // Lock used for diagnostic snapshotting to avoid collection during enumeration
+        private static readonly object _pendingSamplesLock = new();
         private static readonly List<string> _expiredKeys = new();
         private static long _lastCleanupTime;
 
@@ -37,12 +39,36 @@ namespace MCPForUnity.Editor.Timeline.Capture
         /// Returns true if the event should be recorded, false if it should be filtered out.
         ///
         /// This method is called by event emitters before recording to EventStore.
+        /// Implements a three-stage filtering pipeline:
+        /// 1. Blacklist (EventFilter) - filters system junk
+        /// 2. Sampling strategy - merges duplicate events
+        /// 3. Cache management - prevents unbounded growth
         /// </summary>
         public static bool ShouldRecord(EditorEvent evt)
         {
             if (evt == null)
                 return false;
 
+            // ========== Stage 1: Blacklist Filtering (L1) ==========
+            // Check if this event's target is known junk before any other processing
+            if (evt.Type == EventTypes.AssetImported ||
+                evt.Type == EventTypes.AssetMoved ||
+                evt.Type == EventTypes.AssetDeleted)
+            {
+                // For asset events, check the path (stored in TargetId or payload)
+                string assetPath = evt.TargetId;
+                if (string.IsNullOrEmpty(assetPath) && evt.Payload.TryGetValue("path", out var pathVal))
+                {
+                    assetPath = pathVal?.ToString();
+                }
+
+                if (!string.IsNullOrEmpty(assetPath) && !EventFilter.ShouldTrackAsset(assetPath))
+                {
+                    return false; // Filtered by blacklist
+                }
+            }
+
+            // ========== Stage 2: Sampling Strategy Check (L2) ==========
             // No sampling strategy configured - record all events
             if (!SamplingConfig.Strategies.TryGetValue(evt.Type, out var strategy))
                 return true;
@@ -162,8 +188,12 @@ namespace MCPForUnity.Editor.Timeline.Capture
         /// </summary>
         public static List<EditorEvent> FlushPending()
         {
-            var result = _pendingSamples.Values.Select(p => p.Event).ToList();
-            _pendingSamples.Clear();
+            List<EditorEvent> result;
+            lock (_pendingSamplesLock)
+            {
+                result = _pendingSamples.Values.Select(p => p.Event).ToList();
+                _pendingSamples.Clear();
+            }
             return result;
         }
 
@@ -172,6 +202,18 @@ namespace MCPForUnity.Editor.Timeline.Capture
         /// Useful for debugging and monitoring.
         /// </summary>
         public static int PendingCount => _pendingSamples.Count;
+
+        /// <summary>
+        /// Diagnostic helper: returns a snapshot of pending sampling keys.
+        /// Safe to call from editor threads; best-effort snapshot.
+        /// </summary>
+        public static IReadOnlyList<string> GetPendingKeysSnapshot()
+        {
+            lock (_pendingSamplesLock)
+            {
+                return _pendingSamples.Keys.ToList();
+            }
+        }
 
         /// <summary>
         /// Clears all pending samples without recording them.
@@ -243,12 +285,10 @@ namespace MCPForUnity.Editor.Timeline.Capture
                 new SamplingStrategy(SamplingMode.Throttle, 1000)
             },
 
-            // PropertyModified (same property): DebounceByKey to merge Slider drags
-            // Note: PropertyChangeTracker handles its own debouncing, this is a backup
-            {
-                EventTypes.PropertyModified,
-                new SamplingStrategy(SamplingMode.DebounceByKey, 500)
-            },
+            // PropertyModified handling removed here to avoid double-debounce when
+            // PropertyChangeTracker already implements a dedicated debounce window.
+            // If desired, SamplingConfig.SetStrategy(EventTypes.PropertyModified, ...) can
+            // be used at runtime to re-enable middleware-level sampling.
 
             // Component/GameObject events: No sampling (always record)
             // ComponentAdded, ComponentRemoved, GameObjectCreated, GameObjectDestroyed

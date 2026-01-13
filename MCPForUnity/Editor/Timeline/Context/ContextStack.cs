@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
+using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Timeline.Context
 {
@@ -67,7 +68,7 @@ namespace MCPForUnity.Editor.Timeline.Context
                 _threadId = Thread.CurrentThread.ManagedThreadId;
 
 #if DEBUG
-                UnityEngine.Debug.Log(
+                McpLog.Info(
                     $"[ContextStack] Initialized new stack for thread {_threadId}");
 #endif
             }
@@ -124,19 +125,40 @@ namespace MCPForUnity.Editor.Timeline.Context
             }
 
             // Stack mismatch - this indicates a programming error
-            // Log detailed diagnostic info
+            // 改进：只移除不匹配的上下文，保留有效的
             var currentThreadId = Thread.CurrentThread.ManagedThreadId;
             var stackSnapshot = string.Join(", ", stack.Select(c => c.ContextId.ToString().Substring(0, 8)));
-            UnityEngine.Debug.LogWarning(
-                $"[ContextStack] Mismatched pop on thread {currentThreadId}:\n" +
-                $"  Expected: {expectedContext.ContextId}\n" +
-                $"  Found: {top.ContextId}\n" +
-                $"  Stack (top to bottom): [{stackSnapshot}]\n" +
-                $"  Original stack thread: {_threadId}\n" +
-                $"  Clearing stack to prevent corruption.");
 
-            stack.Clear();
-            return false;
+            // 尝试找到并移除不匹配的上下文
+            var tempStack = new Stack<OperationContext>();
+            bool found = false;
+
+            while (stack.Count > 0)
+            {
+                var item = stack.Pop();
+                if (item.Equals(expectedContext))
+                {
+                    found = true;
+                    break;
+                }
+                tempStack.Push(item);
+            }
+
+            // 恢复有效上下文
+            while (tempStack.Count > 0)
+            {
+                stack.Push(tempStack.Pop());
+            }
+
+            if (!found)
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[ContextStack] Expected context {expectedContext.ContextId} not found on thread {currentThreadId}\n" +
+                    $"  Stack snapshot: [{stackSnapshot}]\n" +
+                    $"  No changes made to stack.");
+            }
+
+            return found;
         }
 
         /// <summary>

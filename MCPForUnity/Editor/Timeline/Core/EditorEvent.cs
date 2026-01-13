@@ -2,12 +2,18 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Timeline.Core
 {
     /// <summary>
     /// Immutable class representing a single editor event.
     /// This is the "bedrock" layer - once written, never modified.
+    ///
+    /// Memory optimization (Pruning):
+    /// - Payload can be null for old events (automatically dehydrated by EventStore)
+    /// - PrecomputedSummary is always available, even when Payload is null
+    /// - This reduces memory from ~10KB to ~100 bytes per old event
     ///
     /// Payload serialization constraints:
     /// - Only JSON-serializable types are allowed: string, number (int/long/float/double/decimal),
@@ -16,6 +22,11 @@ namespace MCPForUnity.Editor.Timeline.Core
     /// </summary>
     public sealed class EditorEvent : IEquatable<EditorEvent>
     {
+        // Limits to protect memory usage for payloads
+        private const int MaxStringLength = 512; // truncate long strings
+        private const int MaxCollectionItems = 64; // max items to keep in arrays/lists
+        private const int MaxSanitizeDepth = 4; // prevent deep recursion
+
         /// <summary>
         /// Monotonically increasing sequence number for ordering.
         /// </summary>
@@ -39,8 +50,22 @@ namespace MCPForUnity.Editor.Timeline.Core
         /// <summary>
         /// Event payload containing additional context data.
         /// All values are guaranteed to be JSON-serializable.
+        ///
+        /// Can be null for old events (after dehydration).
+        /// Use PrecomputedSummary instead when Payload is null.
         /// </summary>
         public IReadOnlyDictionary<string, object> Payload { get; }
+
+        /// <summary>
+        /// Precomputed summary for this event.
+        /// Always available, even when Payload has been dehydrated (null).
+        /// </summary>
+        public string PrecomputedSummary { get; private set; }
+
+        /// <summary>
+        /// Whether this event's payload has been dehydrated (trimmed to save memory).
+        /// </summary>
+        public bool IsDehydrated { get; private set; }
 
         public EditorEvent(
             long sequence,
@@ -56,9 +81,98 @@ namespace MCPForUnity.Editor.Timeline.Core
 
             // Validate and sanitize payload to ensure JSON-serializable types
             if (payload == null)
-                throw new ArgumentNullException(nameof(payload));
+            {
+                Payload = null;
+                PrecomputedSummary = null;
+                IsDehydrated = false;
+            }
+            else
+            {
+                Payload = SanitizePayload(payload, type);
+                PrecomputedSummary = null; // Will be computed on first access or dehydration
+                IsDehydrated = false;
+            }
+        }
 
-            Payload = SanitizePayload(payload, type);
+        /// <summary>
+        /// Constructor for creating a dehydrated (trimmed) event.
+        /// Used internally by EventStore for memory optimization.
+        /// </summary>
+        private EditorEvent(
+            long sequence,
+            long timestampUnixMs,
+            string type,
+            string targetId,
+            string precomputedSummary)
+        {
+            Sequence = sequence;
+            TimestampUnixMs = timestampUnixMs;
+            Type = type;
+            TargetId = targetId;
+            Payload = null;  // Dehydrated - no payload
+            PrecomputedSummary = precomputedSummary;
+            IsDehydrated = true;
+        }
+
+        /// <summary>
+        /// Dehydrate this event to save memory.
+        /// - Generates PrecomputedSummary from Payload
+        /// - Sets Payload to null (releasing large objects)
+        /// - Marks event as IsDehydrated
+        ///
+        /// Call this when event becomes "cold" (old but still needed for history).
+        /// </summary>
+        public EditorEvent Dehydrate()
+        {
+            if (IsDehydrated)
+                return this;  // Already dehydrated
+
+            // Generate summary if not already computed
+            var summary = PrecomputedSummary ?? ComputeSummary();
+
+            // Return new dehydrated event (immutable pattern)
+            return new EditorEvent(
+                Sequence,
+                TimestampUnixMs,
+                Type,
+                TargetId,
+                summary
+            );
+        }
+
+        /// <summary>
+        /// Get the precomputed summary, computing it if necessary.
+        /// This is lazy-evaluated to avoid unnecessary computation.
+        /// </summary>
+        public string GetSummary()
+        {
+            if (PrecomputedSummary != null)
+                return PrecomputedSummary;
+
+            // Compute and cache (this mutates the object, but it's just a string field)
+            PrecomputedSummary = ComputeSummary();
+            return PrecomputedSummary;
+        }
+
+        /// <summary>
+        /// Compute the summary for this event.
+        /// This is called by GetSummary() or Dehydrate().
+        /// </summary>
+        private string ComputeSummary()
+        {
+            // Import EventSummarizer here to avoid circular dependency
+            // For now, use a simple summary
+            if (Payload == null)
+                return $"{Type} on {TargetId}";
+
+            // Try to get a more detailed summary from payload
+            if (Payload.TryGetValue("name", out var name) && name != null)
+                return $"{Type}: {name}";
+
+            if (Payload.TryGetValue("property", out var prop) && prop != null)
+                return $"{Type}: {TargetId}.{prop}";
+
+            return $"{Type} on {TargetId}";
         }
 
         /// <summary>
@@ -73,7 +187,7 @@ namespace MCPForUnity.Editor.Timeline.Core
 
             foreach (var kvp in payload)
             {
-                var value = SanitizeValue(kvp.Value, kvp.Key, eventType);
+                var value = SanitizeValue(kvp.Value, kvp.Key, eventType, 0);
                 if (value != null || kvp.Value == null)
                 {
                     // Only add if not filtered out (null values are allowed)
@@ -88,13 +202,25 @@ namespace MCPForUnity.Editor.Timeline.Core
         /// Recursively validate and sanitize a single value.
         /// Returns null for unsupported types (which will be filtered out).
         /// </summary>
-        private static object SanitizeValue(object value, string key, string eventType)
+        private static object SanitizeValue(object value, string key, string eventType, int depth)
         {
             if (value == null)
                 return null;
 
+            if (depth > MaxSanitizeDepth)
+            {
+                // Depth exceeded: return placeholder to avoid deep structures
+                return "<truncated:depth>";
+            }
+
             // Primitive JSON-serializable types
-            if (value is string || value is bool)
+            if (value is string s)
+            {
+                if (s.Length > MaxStringLength)
+                    return s.Substring(0, MaxStringLength) + "...";
+                return s;
+            }
+            if (value is bool)
                 return value;
 
             // Numeric types - convert to consistent types
@@ -114,25 +240,25 @@ namespace MCPForUnity.Editor.Timeline.Core
             // Arrays - handle native arrays (int[], string[], etc.)
             if (value.GetType().IsArray)
             {
-                return SanitizeArray((Array)value, key, eventType);
+                return SanitizeArray((Array)value, key, eventType, depth + 1);
             }
 
             // Generic collections - use non-generic interface for broader compatibility
             // This handles List<T>, IEnumerable<T>, HashSet<T>, etc. with any element type
             if (value is IEnumerable enumerable && !(value is string) && !(value is IDictionary))
             {
-                return SanitizeEnumerable(enumerable, key, eventType);
+                return SanitizeEnumerable(enumerable, key, eventType, depth + 1);
             }
 
             // Dictionaries - use non-generic interface for broader compatibility
             // This handles Dictionary<K,V> with any value type
             if (value is IDictionary dict)
             {
-                return SanitizeDictionary(dict, key, eventType);
+                return SanitizeDictionary(dict, key, eventType, depth + 1);
             }
 
             // Unsupported type - log warning and filter out
-            UnityEngine.Debug.LogWarning(
+            McpLog.Warn(
                 $"[EditorEvent] Unsupported payload type '{value.GetType().Name}' " +
                 $"for key '{key}' in event '{eventType}'. Value will be excluded from payload. " +
                 $"Supported types: string, number, bool, null, array, List, Dictionary.");
@@ -143,12 +269,18 @@ namespace MCPForUnity.Editor.Timeline.Core
         /// <summary>
         /// Sanitize a native array.
         /// </summary>
-        private static object SanitizeArray(Array array, string key, string eventType)
+        private static object SanitizeArray(Array array, string key, string eventType, int depth)
         {
-            var list = new List<object>(array.Length);
+            var list = new List<object>(Math.Min(array.Length, MaxCollectionItems));
+            int count = 0;
             foreach (var item in array)
             {
-                var sanitized = SanitizeValue(item, key, eventType);
+                if (count++ >= MaxCollectionItems)
+                {
+                    list.Add("<truncated:more_items>");
+                    break;
+                }
+                var sanitized = SanitizeValue(item, key, eventType, depth);
                 if (sanitized != null || item == null)
                 {
                     list.Add(sanitized);
@@ -161,12 +293,18 @@ namespace MCPForUnity.Editor.Timeline.Core
         /// Sanitize a generic IEnumerable (List<T>, IEnumerable<T>, etc.)
         /// Uses non-generic interface to handle any element type.
         /// </summary>
-        private static object SanitizeEnumerable(IEnumerable enumerable, string key, string eventType)
+        private static object SanitizeEnumerable(IEnumerable enumerable, string key, string eventType, int depth)
         {
-            var list = new List<object>();
+            var list = new List<object>(MaxCollectionItems);
+            int count = 0;
             foreach (var item in enumerable)
             {
-                var sanitized = SanitizeValue(item, key, eventType);
+                if (count++ >= MaxCollectionItems)
+                {
+                    list.Add("<truncated:more_items>");
+                    break;
+                }
+                var sanitized = SanitizeValue(item, key, eventType, depth);
                 if (sanitized != null || item == null)
                 {
                     list.Add(sanitized);
@@ -180,16 +318,22 @@ namespace MCPForUnity.Editor.Timeline.Core
         /// Uses non-generic interface to handle any key/value types.
         /// Only string keys are supported; other key types are skipped with warning.
         /// </summary>
-        private static object SanitizeDictionary(IDictionary dict, string key, string eventType)
+        private static object SanitizeDictionary(IDictionary dict, string key, string eventType, int depth)
         {
-            var result = new Dictionary<string, object>();
-
+            var result = new Dictionary<string, object>(Math.Min(dict.Count, MaxCollectionItems));
+            int count = 0;
             foreach (DictionaryEntry entry in dict)
             {
+                if (count++ >= MaxCollectionItems)
+                {
+                    result["<truncated>"] = "more_items";
+                    break;
+                }
+
                 // Only support string keys
                 if (entry.Key is string stringKey)
                 {
-                    var sanitizedValue = SanitizeValue(entry.Value, stringKey, eventType);
+                    var sanitizedValue = SanitizeValue(entry.Value, stringKey, eventType, depth);
                     if (sanitizedValue != null || entry.Value == null)
                     {
                         result[stringKey] = sanitizedValue;
@@ -197,7 +341,7 @@ namespace MCPForUnity.Editor.Timeline.Core
                 }
                 else
                 {
-                    UnityEngine.Debug.LogWarning(
+                    McpLog.Warn(
                         $"[EditorEvent] Dictionary key type '{entry.Key?.GetType().Name}' " +
                         $"is not supported. Only string keys are supported. Key will be skipped.");
                 }
