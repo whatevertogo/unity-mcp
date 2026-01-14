@@ -1,8 +1,8 @@
 """
-Defines the undo_to_sequence tool for reverting Unity editor state to a specific Timeline sequence.
+Defines the undo_to_sequence tool for reverting Unity editor state to a specific ActionTrace sequence.
 
 This tool provides "regret medicine" for AI operations - allowing the editor state
-to be reverted to a previous point identified by a Timeline sequence number.
+to be reverted to a previous point identified by an ActionTrace sequence number.
 
 Unity implementation: MCPForUnity/Editor/Tools/UndoToSequenceTool.cs
 """
@@ -19,7 +19,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 
 @mcp_for_unity_tool(
-    description="Reverts the Unity editor state to a specific Timeline sequence number. This provides a way to 'undo' to a previous state. Use dry_run=true first to preview how many Undo steps will be performed. Warning: Redo (Ctrl+Y) may not work correctly after this operation.",
+    description="Reverts the Unity editor state to a specific ActionTrace sequence number. This provides a way to 'undo' to a previous state. Use dry_run=true first to preview how many Undo steps will be performed. Warning: Redo (Ctrl+Y) may not work correctly after this operation.",
     annotations=ToolAnnotations(
         title="Undo to Sequence",
     ),
@@ -30,7 +30,7 @@ async def undo_to_sequence(
     dry_run: Annotated[bool | str, "If true, only calculate steps without executing. Use this to preview the undo operation before actually performing it."] | None = None,
 ) -> dict[str, Any]:
     """
-    Undo Unity editor state to a specific Timeline sequence.
+    Undo Unity editor state to a specific ActionTrace sequence.
 
     This tool allows reverting the editor to a previous state by:
     1. Finding all events after the target sequence

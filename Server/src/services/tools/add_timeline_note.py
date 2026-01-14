@@ -1,13 +1,13 @@
 """
-Defines the add_timeline_note tool for AI agents to record comments to the Timeline.
+Defines the add_action_trace_note tool for AI agents to record comments to the ActionTrace.
 
 This enables multi-agent collaboration and task-level tracking:
 - task_id: Groups notes from a single task across multiple tool calls
 - conversation_id: Tracks continuity across sessions
 - agent_id: Identifies which AI wrote the note
-- related_sequences: Links notes to specific Timeline events
+- related_sequences: Links notes to specific ActionTrace events
 
-Unity implementation: MCPForUnity/Editor/Tools/AddTimelineNoteTool.cs
+Unity implementation: MCPForUnity/Editor/Tools/AddActionTraceNoteTool.cs
 """
 import uuid
 from contextvars import ContextVar
@@ -29,12 +29,12 @@ _current_conversation_id: ContextVar[str] = ContextVar('current_conversation_id'
 
 
 @mcp_for_unity_tool(
-    description="Adds an AI comment or summary to the Timeline. Supports task-level tracking and multi-agent collaboration. Use this to record decisions, task completion, or explain the purpose of a series of operations.",
+    description="Adds an AI comment or summary to the ActionTrace. Supports task-level tracking and multi-agent collaboration. Use this to record decisions, task completion, or explain the purpose of a series of operations.",
     annotations=ToolAnnotations(
-        title="Add Timeline Note",
+        title="Add Action Trace Note",
     ),
 )
-async def add_timeline_note(
+async def add_action_trace_note(
     ctx: Context,
     note: Annotated[str, "The note text to record. Should be concise and informative (e.g., '完成玩家移动系统的重构，速度从 5 提升到 8')."],
     intent: Annotated[str, "The intent/category of the note (e.g., 'refactoring', 'bugfix', 'feature', 'optimization')."] | None = None,
@@ -42,10 +42,10 @@ async def add_timeline_note(
     agent_model: Annotated[str, "Model version (optional, for detailed tracking)."] | None = None,
     task_id: Annotated[str, "Task-level identifier. Groups all notes from a single task. If not specified, will be auto-generated or retrieved from context."] | None = None,
     conversation_id: Annotated[str, "Conversation/session identifier for cross-session tracking. If not specified, will be auto-generated or retrieved from context."] | None = None,
-    related_sequences: Annotated[list[int], "List of Timeline event sequence numbers to link this note to (optional)."] | None = None,
+    related_sequences: Annotated[list[int], "List of ActionTrace event sequence numbers to link this note to (optional)."] | None = None,
 ) -> dict[str, Any]:
     """
-    Add an AI comment to the Timeline.
+    Add an AI comment to the ActionTrace.
 
     This tool enables AI agents to record summaries, decisions, or task completion notes.
     Notes are recorded as AINote events with critical importance (1.0).
@@ -103,7 +103,7 @@ async def add_timeline_note(
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
-        "add_timeline_note",
+        "add_action_trace_note",
         params_dict,
     )
 
@@ -112,7 +112,7 @@ async def add_timeline_note(
 
 def set_task_context(task_id: str, conversation_id: str = "") -> None:
     """
-    Set the current task/conversation context for all subsequent timeline notes.
+    Set the current task/conversation context for all subsequent action trace notes.
 
     This is useful for batch operations where multiple tool calls belong to the same task.
 
@@ -126,8 +126,8 @@ def set_task_context(task_id: str, conversation_id: str = "") -> None:
         set_task_context("refactor-player", "session-2024-01-15")
 
         # All subsequent notes will automatically use these IDs
-        await add_timeline_note(ctx, note="第一步：修改 PlayerController")
-        await add_timeline_note(ctx, note="第二步：提升移动速度到 8")
+        await add_action_trace_note(ctx, note="第一步：修改 PlayerController")
+        await add_action_trace_note(ctx, note="第二步：提升移动速度到 8")
         ```
     """
     _current_task_id.set(task_id)

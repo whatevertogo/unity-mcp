@@ -36,7 +36,7 @@ namespace MCPForUnity.Editor.MenuItems
         [MenuItem("Window/MCP For Unity/Timeline", priority = 4)]
         public static void ShowTimelineWindow()
         {
-            TimelineEditorWindow.ShowWindow();
+            ActionTraceEditorWindow.ShowWindow();
         }
     }
 }

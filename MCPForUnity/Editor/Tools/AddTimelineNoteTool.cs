@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Timeline.Core;
+using MCPForUnity.Editor.ActionTrace.Core;
 
 namespace MCPForUnity.Editor.Tools
 {
     /// <summary>
-    /// MCP Tool for adding AI comments/notes to the Timeline.
+    /// MCP Tool for adding AI comments/notes to the ActionTrace.
     ///
     /// Usage: AI agents call this tool to record summaries, decisions, or task completion notes.
     ///
@@ -26,11 +26,11 @@ namespace MCPForUnity.Editor.Tools
     ///   "related_sequences": [100, 101, 102]
     /// }
     /// </summary>
-    [McpForUnityTool("add_timeline_note")]
-    public static class AddTimelineNoteTool
+    [McpForUnityTool("add_action_trace_note")]
+    public static class AddActionTraceNoteTool
     {
         /// <summary>
-        /// Parameters for add_timeline_note tool.
+        /// Parameters for add_action_trace_note tool.
         /// </summary>
         public class Parameters
         {
@@ -139,7 +139,7 @@ namespace MCPForUnity.Editor.Tools
                     }
                     catch (Exception ex)
                     {
-                        McpLog.Warn($"[AddTimelineNoteTool] Failed to parse related_sequences: {ex.Message}");
+                        McpLog.Warn($"[AddActionTraceNoteTool] Failed to parse related_sequences: {ex.Message}");
                     }
                 }
 
@@ -154,7 +154,7 @@ namespace MCPForUnity.Editor.Tools
 
                 long recordedSequence = EventStore.Record(evt);
 
-                return new SuccessResponse($"AI note added to timeline (sequence {recordedSequence})", new
+                return new SuccessResponse($"AI note added to action trace (sequence {recordedSequence})", new
                 {
                     sequence = recordedSequence,
                     timestamp_unix_ms = evt.TimestampUnixMs,
@@ -164,8 +164,8 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception ex)
             {
-                McpLog.Error($"[AddTimelineNoteTool] Error: {ex.Message}");
-                return new ErrorResponse($"Failed to add timeline note: {ex.Message}");
+                McpLog.Error($"[AddActionTraceNoteTool] Error: {ex.Message}");
+                return new ErrorResponse($"Failed to add action trace note: {ex.Message}");
             }
         }
     }

@@ -1,10 +1,10 @@
 """
-Defines the get_timeline tool for querying Unity editor event history.
+Defines the get_action_trace tool for querying Unity editor event history.
 
-This tool provides access to the Timeline system which tracks editor events
+This tool provides access to the ActionTrace system which tracks editor events
 with human-readable summaries, semantic analysis, and optional context associations.
 
-Unity implementation: MCPForUnity/Editor/Resources/Timeline/TimelineViewResource.cs
+Unity implementation: MCPForUnity/Editor/Resources/ActionTrace/ActionTraceViewResource.cs
 """
 from typing import Annotated, Any
 
@@ -19,12 +19,12 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 
 @mcp_for_unity_tool(
-    description="Queries the timeline of editor events with human-readable summaries. Supports semantic analysis (importance, category, intent), context associations, and task-level filtering. This is a read-only snapshot query of the Unity editor's event history. By default, only medium+ importance events are returned (filters out noise like HierarchyChanged). Use include_low_importance=true to see all events.",
+    description="Queries the action trace of editor events with human-readable summaries. Supports semantic analysis (importance, category, intent), context associations, and task-level filtering. This is a read-only snapshot query of the Unity editor's event history. By default, only medium+ importance events are returned (filters out noise like HierarchyChanged). Use include_low_importance=true to see all events.",
     annotations=ToolAnnotations(
-        title="Get Timeline",
+        title="Get Action Trace",
     ),
 )
-async def get_timeline(
+async def get_action_trace(
     ctx: Context,
     limit: Annotated[int | str, "Maximum number of events to return (1-1000, default: 50). Accepts int or string e.g., 50 or '50'."] | None = None,
     since_sequence: Annotated[int | str, "Only return events after this sequence number. Use to poll for new events since last query."] | None = None,
@@ -36,7 +36,7 @@ async def get_timeline(
     source: Annotated[str, "Filter by operation source: 'ai', 'human', or 'system' (not yet supported)."] | None = None,
 ) -> dict[str, Any]:
     """
-    Get timeline of editor events from Unity.
+    Get action trace of editor events from Unity.
 
     Returns events in reverse chronological order (newest first) with:
     - sequence: Event sequence number
@@ -67,9 +67,9 @@ async def get_timeline(
     - context: Context information if available
 
     Response schema versions:
-    - timeline_view@1: Basic query
-    - timeline_view@2: With context
-    - timeline_view@3: With semantics
+    - action_trace_view@1: Basic query
+    - action_trace_view@2: With context
+    - action_trace_view@3: With semantics
     """
     # Get active instance from request state (injected by middleware)
     unity_instance = get_unity_instance_from_context(ctx)
@@ -81,7 +81,7 @@ async def get_timeline(
     include_low_importance = coerce_bool(include_low_importance, default=False)  # L3: Default to filtering
 
     # Clamp limit to reasonable range
-    coerced_limit = max(1, min(coerced_limit, 1000))
+    coerced_limit = max(1, min(coerced_limit or 50, 1000))
 
     # Prepare parameters for the C# handler
     params_dict: dict[str, Any] = {
@@ -119,7 +119,7 @@ async def get_timeline(
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
-        "timeline_view",
+        "action_trace_view",
         params_dict,
     )
 

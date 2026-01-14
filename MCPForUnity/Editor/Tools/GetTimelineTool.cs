@@ -1,21 +1,21 @@
 using System;
 using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Resources.Timeline;
+using MCPForUnity.Editor.Resources.ActionTrace;
 using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools
 {
     /// <summary>
-    /// MCP tool for querying the timeline of editor events.
+    /// MCP tool for querying the action trace of editor events.
     ///
-    /// This is a convenience wrapper around TimelineViewResource that provides
-    /// a cleaner "get_timeline" tool name for AI consumption.
+    /// This is a convenience wrapper around ActionTraceViewResource that provides
+    /// a cleaner "get_action_trace" tool name for AI consumption.
     /// </summary>
-    [McpForUnityTool("get_timeline", AutoRegister = false)]
-    public static class GetTimelineTool
+    [McpForUnityTool("get_action_trace", AutoRegister = false)]
+    public static class GetActionTraceTool
     {
         /// <summary>
-        /// Parameters for get_timeline tool.
+        /// Parameters for get_action_trace tool.
         /// </summary>
         public class Parameters
         {
@@ -51,12 +51,12 @@ namespace MCPForUnity.Editor.Tools
         }
 
         /// <summary>
-        /// Main handler for timeline queries.
+        /// Main handler for action trace queries.
         /// </summary>
         public static object HandleCommand(JObject @params)
         {
-            // Delegate to the existing TimelineViewResource implementation
-            return TimelineViewResource.HandleCommand(@params);
+            // Delegate to the existing ActionTraceViewResource implementation
+            return ActionTraceViewResource.HandleCommand(@params);
         }
     }
 }
