@@ -26,10 +26,10 @@ namespace MCPForUnity.Editor.Tools
     public static class ManageAsset
     {
         // ========================================================================
-        // Timeline Integration (Low-Coupling Event Callbacks)
+        // ActionTrace Integration (Low-Coupling Event Callbacks)
         // ========================================================================
         /// <summary>
-        /// Callback raised when an asset is modified. External systems (like Timeline)
+        /// Callback raised when an asset is modified. External systems (like ActionTrace)
         /// can subscribe to this to track changes without tight coupling.
         ///
         /// Parameters: (assetPath, assetType, changesDictionary)
@@ -289,7 +289,7 @@ namespace MCPForUnity.Editor.Tools
 
                 AssetDatabase.SaveAssets();
 
-                // === Timeline Integration: Notify subscribers (low-coupling) ===
+                // === ActionTrace Integration: Notify subscribers (low-coupling) ===
                 OnAssetCreated?.Invoke(fullPath, assetType);
 
                 // AssetDatabase.Refresh(); // CreateAsset often handles refresh
@@ -495,7 +495,7 @@ namespace MCPForUnity.Editor.Tools
                     // Save all modified assets to disk.
                     AssetDatabase.SaveAssets();
 
-                    // === Timeline Integration: Notify subscribers (low-coupling) ===
+                    // === ActionTrace Integration: Notify subscribers (low-coupling) ===
                     OnAssetModified?.Invoke(
                         fullPath,
                         asset.GetType().FullName,
@@ -536,7 +536,7 @@ namespace MCPForUnity.Editor.Tools
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Asset not found at path: {fullPath}");
 
-            // Capture asset type before deletion (for Timeline callback)
+            // Capture asset type before deletion (for ActionTrace callback)
             string assetType = AssetDatabase.GetMainAssetTypeAtPath(fullPath)?.FullName ?? "Unknown";
 
             try
@@ -544,7 +544,7 @@ namespace MCPForUnity.Editor.Tools
                 bool success = AssetDatabase.DeleteAsset(fullPath);
                 if (success)
                 {
-                    // === Timeline Integration: Notify subscribers (low-coupling) ===
+                    // === ActionTrace Integration: Notify subscribers (low-coupling) ===
                     OnAssetDeleted?.Invoke(fullPath, assetType);
 
                     // AssetDatabase.Refresh(); // DeleteAsset usually handles refresh

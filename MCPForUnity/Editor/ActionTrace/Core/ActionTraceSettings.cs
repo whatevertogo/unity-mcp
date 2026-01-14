@@ -115,14 +115,14 @@ namespace MCPForUnity.Editor.ActionTrace.Core
 
     /// <summary>
     /// Custom editor for ActionTraceSettings.
-    /// Provides a clean UI for modifying timeline settings.
+    /// Provides a clean UI for modifying ActionTrace settings.
     /// </summary>
     [CustomEditor(typeof(ActionTraceSettings))]
     public class ActionTraceSettingsEditor : UnityEditor.Editor
     {
         public override void OnInspectorGUI()
         {
-            GUILayout.Label("Timeline Settings", EditorStyles.boldLabel);
+            GUILayout.Label("ActionTrace Settings", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
                 "These settings control event recording behavior at the store level.\n" +
                 "Changes affect which events are captured, not just UI display.",

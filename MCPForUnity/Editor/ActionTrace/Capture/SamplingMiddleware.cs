@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.ActionTrace.Core;
@@ -8,7 +9,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
     /// <summary>
     /// Smart sampling middleware to prevent event floods in high-frequency scenarios.
     ///
-    /// Protects the Timeline from event storms (e.g., rapid Slider dragging,
+    /// Protects the ActionTrace from event storms (e.g., rapid Slider dragging,
     /// continuous Hierarchy changes) by applying configurable sampling strategies.
     ///
     /// Sampling modes:
@@ -28,9 +29,8 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         private const long CleanupAgeMs = 2000;          // Cleanup samples older than 2 seconds
 
         // State
-        private static readonly Dictionary<string, PendingSample> _pendingSamples = new();
-        // Lock used for diagnostic snapshotting to avoid collection during enumeration
-        private static readonly object _pendingSamplesLock = new();
+        // Thread-safe dictionary to prevent race conditions in multi-threaded scenarios
+        private static readonly ConcurrentDictionary<string, PendingSample> _pendingSamples = new();
         private static readonly List<string> _expiredKeys = new();
         private static long _lastCleanupTime;
 
@@ -107,14 +107,18 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
                         case SamplingMode.Debounce:
                         case SamplingMode.DebounceByKey:
                             // Debounce: Keep only the last event in the window
-                            pending.Event = evt;  // Update to latest event
-                            pending.TimestampMs = nowMs;
+                            // Note: Must update the dictionary entry since PendingSample is a struct
+                            _pendingSamples[key] = new PendingSample
+                            {
+                                Event = evt,
+                                TimestampMs = nowMs
+                            };
                             return false;
                     }
                 }
 
                 // Window expired - remove old entry
-                _pendingSamples.Remove(key);
+                _pendingSamples.TryRemove(key, out _);
             }
 
             // Enforce cache limit to prevent unbounded growth
@@ -128,7 +132,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
                     var oldest = _pendingSamples.OrderBy(kvp => kvp.Value.TimestampMs).FirstOrDefault();
                     if (!string.IsNullOrEmpty(oldest.Key))
                     {
-                        _pendingSamples.Remove(oldest.Key);
+                        _pendingSamples.TryRemove(oldest.Key, out _);
                     }
                 }
             }
@@ -178,7 +182,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
 
             foreach (var key in _expiredKeys)
             {
-                _pendingSamples.Remove(key);
+                _pendingSamples.TryRemove(key, out _);
             }
         }
 
@@ -188,12 +192,8 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         /// </summary>
         public static List<EditorEvent> FlushPending()
         {
-            List<EditorEvent> result;
-            lock (_pendingSamplesLock)
-            {
-                result = _pendingSamples.Values.Select(p => p.Event).ToList();
-                _pendingSamples.Clear();
-            }
+            var result = _pendingSamples.Values.Select(p => p.Event).ToList();
+            _pendingSamples.Clear();
             return result;
         }
 
@@ -209,10 +209,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         /// </summary>
         public static IReadOnlyList<string> GetPendingKeysSnapshot()
         {
-            lock (_pendingSamplesLock)
-            {
-                return _pendingSamples.Keys.ToList();
-            }
+            return _pendingSamples.Keys.ToList();
         }
 
         /// <summary>

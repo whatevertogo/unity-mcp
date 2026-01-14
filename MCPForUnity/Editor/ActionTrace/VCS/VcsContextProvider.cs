@@ -7,9 +7,9 @@ using UnityEngine;
 namespace MCPForUnity.Editor.ActionTrace.VCS
 {
     /// <summary>
-    /// Version Control System (VCS) integration for Timeline events.
+    /// Version Control System (VCS) integration for ActionTrace events.
     ///
-    /// Purpose (from timeline-enhancements.md P2.2):
+    /// Purpose (from ActionTrace-enhancements.md P2.2):
     /// - Track Git commit and branch information
     /// - Mark events as "dirty" if they occurred after last commit
     /// - Help AI understand "脏数据" state

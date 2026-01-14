@@ -78,7 +78,7 @@ namespace MCPForUnity.Editor.Resources.ActionTrace
             catch (Exception ex)
             {
                 McpLog.Error($"[ActionTraceViewResource] Error: {ex.Message}");
-                return new ErrorResponse($"Error retrieving timeline: {ex.Message}");
+                return new ErrorResponse($"Error retrieving ActionTrace: {ex.Message}");
             }
         }
 
@@ -109,7 +109,7 @@ namespace MCPForUnity.Editor.Resources.ActionTrace
                 summary = EventSummarizer.Summarize(e)
             }).ToArray();
 
-            return new SuccessResponse("Retrieved timeline events.", new
+            return new SuccessResponse("Retrieved ActionTrace events.", new
             {
                 schema_version = "action_trace_view@1",
                 items = items,
@@ -149,7 +149,7 @@ namespace MCPForUnity.Editor.Resources.ActionTrace
                 inferred_intent = p.InferredIntent
             }).ToArray();
 
-            return new SuccessResponse("Retrieved timeline events with semantics.", new
+            return new SuccessResponse("Retrieved ActionTrace events with semantics.", new
             {
                 schema_version = "action_trace_view@3",
                 items = items,
@@ -206,7 +206,7 @@ namespace MCPForUnity.Editor.Resources.ActionTrace
                     };
                 }).ToArray();
 
-                return new SuccessResponse("Retrieved timeline events with context and semantics.", new
+                return new SuccessResponse("Retrieved ActionTrace events with context and semantics.", new
                 {
                     schema_version = "action_trace_view@3",
                     items = items,
@@ -240,7 +240,7 @@ namespace MCPForUnity.Editor.Resources.ActionTrace
                     };
                 }).ToArray();
 
-                return new SuccessResponse("Retrieved timeline events with context.", new
+                return new SuccessResponse("Retrieved ActionTrace events with context.", new
                 {
                     schema_version = "action_trace_view@2",
                     items = items,
@@ -505,7 +505,7 @@ namespace MCPForUnity.Editor.Resources.ActionTrace
         /// Returns AtomicOperation list instead of raw events.
         /// Reduces token consumption by grouping related events.
         ///
-        /// From timeline-enhancements.md line 294-300:
+        /// From ActionTrace-enhancements.md line 294-300:
         /// "summary_only=True 时返回 AtomicOperation 列表而非原始事件"
         /// </summary>
         private static object QueryAggregated(int limit, long? sinceSequence, float minImportance, string taskId, string conversationId)

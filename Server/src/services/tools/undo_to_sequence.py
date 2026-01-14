@@ -57,7 +57,7 @@ async def undo_to_sequence(
 
     Example:
         # First, check current sequence
-        result = await get_timeline(ctx, limit=1)
+        result = await get_actionTrace(ctx, limit=1)
         current_seq = result["items"][0]["sequence"]
 
         # Preview undo to 100 steps ago

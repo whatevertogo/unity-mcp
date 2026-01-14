@@ -133,7 +133,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         }
 
         /// <summary>
-        /// Records a SelectionPropertyModified event to the Timeline EventStore.
+        /// Records a SelectionPropertyModified event to the ActionTrace EventStore.
         /// </summary>
         private static void RecordSelectionPropertyModified(UndoPropertyModification undoMod, UnityEngine.Object target, string propertyPath)
         {

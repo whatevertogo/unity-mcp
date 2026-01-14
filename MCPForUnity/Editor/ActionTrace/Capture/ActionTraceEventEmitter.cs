@@ -6,7 +6,7 @@ using UnityEngine;
 namespace MCPForUnity.Editor.ActionTrace.Capture
 {
     /// <summary>
-    /// Centralized event emission layer for the Timeline system.
+    /// Centralized event emission layer for the ActionTrace system.
     /// This middle layer decouples the Capture layer (Unity callbacks) from the Data layer (EventStore).
     ///
     /// Benefits:

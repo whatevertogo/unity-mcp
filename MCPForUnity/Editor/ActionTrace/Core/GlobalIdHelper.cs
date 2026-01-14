@@ -6,7 +6,7 @@ using MCPForUnity.Editor.Helpers;
 namespace MCPForUnity.Editor.ActionTrace.Core
 {
     /// <summary>
-    /// Cross-session stable object identifier for Timeline events.
+    /// Cross-session stable object identifier for ActionTrace events.
     ///
     /// Uses Unity's GlobalObjectId (2020.3+) with fallback to Scene/Asset paths.
     /// This ensures that TargetId references survive domain reloads and editor restarts.
@@ -165,7 +165,7 @@ namespace MCPForUnity.Editor.ActionTrace.Core
 
         /// <summary>
         /// Extracts a human-readable display name from a GlobalId string.
-        /// Useful for Timeline Viewer UI display.
+        /// Useful for ActionTrace Viewer UI display.
         /// Returns the object name if resolvable, otherwise a formatted ID string.
         /// </summary>
         public static string GetDisplayName(string globalIdStr)

@@ -9,9 +9,9 @@ using UnityEditor;
 namespace MCPForUnity.Editor.Tools
 {
     /// <summary>
-    /// MCP Tool for reverting the editor state to a specific Timeline sequence.
+    /// MCP Tool for reverting the editor state to a specific ActionTrace sequence.
     ///
-    /// Purpose (from timeline-enhancements.md P2.4):
+    /// Purpose (from ActionTrace-enhancements.md P2.4):
     /// - Allows AI to "undo" to a previous state identified by sequence number
     /// - Provides "regret medicine" for AI operations
     ///

@@ -3,10 +3,10 @@ using System;
 namespace MCPForUnity.Editor.ActionTrace.Helpers
 {
     /// <summary>
-    /// Helper utilities for Timeline feature.
+    /// Helper utilities for ActionTrace feature.
     ///
     /// Centralized common formatting and conversion methods
-    /// to avoid code duplication across Timeline components.
+    /// to avoid code duplication across ActionTrace components.
     /// </summary>
     public static class ActionTraceHelper
     {
@@ -16,8 +16,8 @@ namespace MCPForUnity.Editor.ActionTrace.Helpers
         ///
         /// Examples:
         /// - "manage_gameobject" → "Manage GameObject"
-        /// - "add_timeline_note" → "Add Timeline Note"
-        /// - "get_timeline" → "Get Timeline"
+        /// - "add_ActionTrace_note" → "Add ActionTrace Note"
+        /// - "get_ActionTrace" → "Get ActionTrace"
         ///
         /// Used in:
         /// - TransactionAggregator (summary generation)

@@ -14,6 +14,33 @@ namespace MCPForUnity.Editor.ActionTrace.Query
     /// </summary>
     public sealed class ActionTraceQuery
     {
+        // Static color caches to avoid repeated Color allocations during UI rendering
+        private static readonly Dictionary<string, Color> EventTypeColors = new()
+        {
+            ["ComponentAdded"] = new Color(0.3f, 0.8f, 0.3f),
+            ["PropertyModified"] = new Color(0.3f, 0.6f, 0.8f),
+            ["SelectionPropertyModified"] = new Color(0.5f, 0.8f, 0.9f),
+            ["GameObjectCreated"] = new Color(0.8f, 0.3f, 0.8f),
+            ["HierarchyChanged"] = new Color(0.8f, 0.8f, 0.3f),
+            ["AINote"] = new Color(0.3f, 0.8f, 0.8f),
+        };
+
+        private static readonly Dictionary<string, Color?> ImportanceColors = new()
+        {
+            ["critical"] = new Color(1f, 0.3f, 0.3f, 0.1f),
+            ["high"] = new Color(1f, 0.6f, 0f, 0.08f),
+            ["medium"] = new Color(1f, 1f, 0.3f, 0.06f),
+            ["low"] = null,
+        };
+
+        private static readonly Dictionary<string, Color> ImportanceBadgeColors = new()
+        {
+            ["critical"] = new Color(0.8f, 0.2f, 0.2f),
+            ["high"] = new Color(1f, 0.5f, 0f),
+            ["medium"] = new Color(1f, 0.8f, 0.2f),
+            ["low"] = new Color(0.5f, 0.5f, 0.5f),
+        };
+
         private readonly IEventScorer _scorer;
         private readonly IEventCategorizer _categorizer;
         private readonly IIntentInferrer _inferrer;
@@ -181,49 +208,29 @@ namespace MCPForUnity.Editor.ActionTrace.Query
 
         /// <summary>
         /// Get event type color for display.
+        /// Uses cached values to avoid repeated allocations.
         /// </summary>
         private static Color GetEventTypeColor(string eventType)
         {
-            return eventType switch
-            {
-                "ComponentAdded" => new Color(0.3f, 0.8f, 0.3f),
-                "PropertyModified" => new Color(0.3f, 0.6f, 0.8f),
-                "SelectionPropertyModified" => new Color(0.5f, 0.8f, 0.9f),  // Light blue for selected property changes
-                "GameObjectCreated" => new Color(0.8f, 0.3f, 0.8f),
-                "HierarchyChanged" => new Color(0.8f, 0.8f, 0.3f),
-                "AINote" => new Color(0.3f, 0.8f, 0.8f),
-                _ => Color.gray
-            };
+            return EventTypeColors.TryGetValue(eventType, out var color) ? color : Color.gray;
         }
 
         /// <summary>
         /// Get importance background color (nullable).
+        /// Uses cached values to avoid repeated allocations.
         /// </summary>
         private static Color? GetImportanceColor(string category)
         {
-            return category switch
-            {
-                "critical" => new Color(1f, 0.3f, 0.3f, 0.1f),
-                "high" => new Color(1f, 0.6f, 0f, 0.08f),
-                "medium" => new Color(1f, 1f, 0.3f, 0.06f),
-                "low" => null,
-                _ => null
-            };
+            return ImportanceColors.TryGetValue(category, out var color) ? color : null;
         }
 
         /// <summary>
         /// Get importance badge color.
+        /// Uses cached values to avoid repeated allocations.
         /// </summary>
         private static Color GetImportanceBadgeColor(string category)
         {
-            return category switch
-            {
-                "critical" => new Color(0.8f, 0.2f, 0.2f),
-                "high" => new Color(1f, 0.5f, 0f),
-                "medium" => new Color(1f, 0.8f, 0.2f),
-                "low" => new Color(0.5f, 0.5f, 0.5f),
-                _ => Color.gray
-            };
+            return ImportanceBadgeColors.TryGetValue(category, out var color) ? color : Color.gray;
         }
 
         /// <summary>

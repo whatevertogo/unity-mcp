@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
     ///
     /// Captures Unity property modifications via Undo.postprocessModifications,
     /// applies debouncing to merge rapid changes (e.g., Slider drag), and records
-    /// PropertyModified events to the Timeline EventStore.
+    /// PropertyModified events to the ActionTrace EventStore.
     ///
     /// Key features:
     /// - Uses EditorApplication.update for consistent periodic flushing
@@ -43,22 +43,28 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         static PropertyChangeTracker()
         {
             Undo.postprocessModifications += mods => ProcessModifications(mods);
-            EditorApplication.update += OnUpdate;
+            ScheduleNextFlush();
         }
 
         /// <summary>
-        /// Periodic flush check via EditorApplication.update.
-        /// More reliable than single delayCall for continuous operation.
+        /// Schedules a delayed flush check using delayCall.
+        /// This is more efficient than per-frame update checks, as it only runs when needed.
         /// </summary>
-        private static void OnUpdate()
+        private static void ScheduleNextFlush()
         {
-            var currentTime = EditorApplication.timeSinceStartup * 1000; // Convert to ms
-
-            if (currentTime - _lastFlushTime >= DebounceWindowMs)
+            EditorApplication.delayCall += () =>
             {
-                FlushPendingChanges();
-                _lastFlushTime = currentTime;
-            }
+                var currentTime = EditorApplication.timeSinceStartup * 1000;
+
+                if (currentTime - _lastFlushTime >= DebounceWindowMs)
+                {
+                    FlushPendingChanges();
+                    _lastFlushTime = currentTime;
+                }
+
+                // Reschedule for next check
+                ScheduleNextFlush();
+            };
         }
 
         /// <summary>
@@ -105,9 +111,11 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
                 if (_pendingChanges.TryGetValue(uniqueKey, out var pending))
                 {
                     // Update existing pending change
+                    // Note: Must reassign to dictionary since PendingPropertyChange is a struct
                     pending.EndValue = FormatPropertyValue(currentValue);
                     pending.ChangeCount++;
                     pending.LastUpdateMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    _pendingChanges[uniqueKey] = pending;
                 }
                 else
                 {
@@ -140,47 +148,59 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         }
 
         /// <summary>
+        /// Generic reflection helper to extract nested values from UndoPropertyModification.
+        /// Traverses dot-separated property paths like "propertyModification.target".
+        /// </summary>
+        private static object GetNestedReflectionValue(object root, string path)
+        {
+            if (root == null || string.IsNullOrEmpty(path))
+                return null;
+
+            var parts = path.Split('.');
+            object current = root;
+
+            foreach (var part in parts)
+            {
+                if (current == null) return null;
+
+                // Try property first (for currentValue, previousValue)
+                var prop = current.GetType().GetProperty(part);
+                if (prop != null)
+                {
+                    current = prop.GetValue(current);
+                    continue;
+                }
+
+                // Try field (for propertyModification, target, value, etc.)
+                var field = current.GetType().GetField(part);
+                if (field != null)
+                {
+                    current = field.GetValue(current);
+                    continue;
+                }
+
+                return null;
+            }
+
+            return current;
+        }
+
+        /// <summary>
         /// Attempts to extract the previous value from an UndoPropertyModification via reflection.
         /// Mirrors the approach used in GetCurrentValueFromUndoMod but targets the previous value.
         /// </summary>
         private static object GetPreviousValueFromUndoMod(UndoPropertyModification undoMod)
         {
-            // Try property 'previousValue' first
-            var prop = undoMod.GetType().GetProperty("previousValue");
-            if (prop != null)
-                return prop.GetValue(undoMod);
+            // Try direct 'previousValue' property first
+            var result = GetNestedReflectionValue(undoMod, "previousValue");
+            if (result != null) return result;
 
-            // Fallback to propertyModification.previousValue or propertyModification.valueBefore
-            var field = undoMod.GetType().GetField("propertyModification");
-            if (field != null)
-            {
-                var propMod = field.GetValue(undoMod);
-                if (propMod != null)
-                {
-                    var prevField = propMod.GetType().GetField("previousValue");
-                    if (prevField != null)
-                        return prevField.GetValue(propMod);
+            // Try 'propertyModification.previousValue'
+            result = GetNestedReflectionValue(undoMod, "propertyModification.previousValue");
+            if (result != null) return result;
 
-                    // Some Unity versions use 'value' with an object that contains 'before'/'after' fields - try common names
-                    var valueField = propMod.GetType().GetField("value");
-                    if (valueField != null)
-                    {
-                        var valObj = valueField.GetValue(propMod);
-                        if (valObj != null)
-                        {
-                            var beforeProp = valObj.GetType().GetProperty("before");
-                            if (beforeProp != null)
-                                return beforeProp.GetValue(valObj);
-
-                            var beforeField = valObj.GetType().GetField("before");
-                            if (beforeField != null)
-                                return beforeField.GetValue(valObj);
-                        }
-                    }
-                }
-            }
-
-            return null;
+            // Some Unity versions use 'propertyModification.value.before'
+            return GetNestedReflectionValue(undoMod, "propertyModification.value.before");
         }
 
         /// <summary>
@@ -188,19 +208,8 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         /// </summary>
         private static UnityEngine.Object GetTargetFromUndoMod(UndoPropertyModification undoMod)
         {
-            // Try reflection to access the propertyModification field
-            var field = undoMod.GetType().GetField("propertyModification");
-            if (field != null)
-            {
-                var propMod = field.GetValue(undoMod);
-                if (propMod != null)
-                {
-                    var targetField = propMod.GetType().GetField("target");
-                    if (targetField != null)
-                        return targetField.GetValue(propMod) as UnityEngine.Object;
-                }
-            }
-            return null;
+            var result = GetNestedReflectionValue(undoMod, "propertyModification.target");
+            return result as UnityEngine.Object;
         }
 
         /// <summary>
@@ -208,18 +217,8 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         /// </summary>
         private static string GetPropertyPathFromUndoMod(UndoPropertyModification undoMod)
         {
-            var field = undoMod.GetType().GetField("propertyModification");
-            if (field != null)
-            {
-                var propMod = field.GetValue(undoMod);
-                if (propMod != null)
-                {
-                    var pathField = propMod.GetType().GetField("propertyPath");
-                    if (pathField != null)
-                        return pathField.GetValue(propMod) as string;
-                }
-            }
-            return null;
+            var result = GetNestedReflectionValue(undoMod, "propertyModification.propertyPath");
+            return result as string;
         }
 
         /// <summary>
@@ -227,24 +226,12 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         /// </summary>
         private static object GetCurrentValueFromUndoMod(UndoPropertyModification undoMod)
         {
-            // Try currentValue property first
-            var prop = undoMod.GetType().GetProperty("currentValue");
-            if (prop != null)
-                return prop.GetValue(undoMod);
+            // Try direct 'currentValue' property first
+            var result = GetNestedReflectionValue(undoMod, "currentValue");
+            if (result != null) return result;
 
-            // Fallback to propertyModification.value
-            var field = undoMod.GetType().GetField("propertyModification");
-            if (field != null)
-            {
-                var propMod = field.GetValue(undoMod);
-                if (propMod != null)
-                {
-                    var valueField = propMod.GetType().GetField("value");
-                    if (valueField != null)
-                        return valueField.GetValue(propMod);
-                }
-            }
-            return null;
+            // Fallback to 'propertyModification.value'
+            return GetNestedReflectionValue(undoMod, "propertyModification.value");
         }
 
         /// <summary>
@@ -339,7 +326,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         }
 
         /// <summary>
-        /// Records a PropertyModified event to the Timeline EventStore.
+        /// Records a PropertyModified event to the ActionTrace EventStore.
         /// </summary>
         private static void RecordPropertyModifiedEvent(in PendingPropertyChange change)
         {

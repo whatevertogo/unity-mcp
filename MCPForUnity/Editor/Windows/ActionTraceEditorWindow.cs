@@ -29,7 +29,7 @@ namespace MCPForUnity.Editor.Windows
 
         // Data
         private readonly List<ActionTraceViewItem> currentEvents = new();
-        private ActionTraceQuery timelineQuery;
+        private ActionTraceQuery actionTraceQuery;
 
         private string searchText = string.Empty;
         private float minImportance;  // Default: AI can see (uses ActionTraceSettings.MinImportanceForRecording)
@@ -41,7 +41,7 @@ namespace MCPForUnity.Editor.Windows
 
         public static void ShowWindow()
         {
-            var window = GetWindow<ActionTraceEditorWindow>("TimeLine");
+            var window = GetWindow<ActionTraceEditorWindow>("ActionTrace");
             window.minSize = new Vector2(900, 600);
         }
 
@@ -64,7 +64,7 @@ namespace MCPForUnity.Editor.Windows
                         SetupReferences();
                         SetupListView();
                         SetupToolbar();
-                        timelineQuery = new ActionTraceQuery();
+                        actionTraceQuery = new ActionTraceQuery();
                         RefreshEvents();
                         UpdateStatus();
                         return;
@@ -142,7 +142,7 @@ namespace MCPForUnity.Editor.Windows
             SetupListView();
             SetupToolbar();
 
-            timelineQuery = new ActionTraceQuery();
+            actionTraceQuery = new ActionTraceQuery();
 
             // Initialize minImportance from ActionTraceSettings (AI can see)
             minImportance = ActionTraceSettings.Instance?.MinImportanceForRecording ?? 0.4f;
@@ -288,8 +288,8 @@ namespace MCPForUnity.Editor.Windows
         private void RefreshEvents()
         {
             IEnumerable<ActionTraceViewItem> source = showContext
-                ? timelineQuery.ProjectWithContext(EventStore.QueryWithContext(200))
-                : timelineQuery.Project(EventStore.Query(200));
+                ? actionTraceQuery.ProjectWithContext(EventStore.QueryWithContext(200))
+                : actionTraceQuery.Project(EventStore.Query(200));
 
             currentEvents.Clear();
             currentEvents.AddRange(source.Where(FilterEvent));

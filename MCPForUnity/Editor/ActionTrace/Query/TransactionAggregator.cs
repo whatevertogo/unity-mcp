@@ -7,12 +7,12 @@ using MCPForUnity.Editor.ActionTrace.Helpers;
 namespace MCPForUnity.Editor.ActionTrace.Query
 {
     /// <summary>
-    /// Logical transaction aggregator for Timeline events.
+    /// Logical transaction aggregator for ActionTrace events.
     ///
     /// Groups continuous events into "atomic operations" (logical transactions)
     /// to reduce token consumption and improve AI efficiency.
     ///
-    /// Aggregation priority (from document timeline-enhancements.md P1.1):
+    /// Aggregation priority (from document ActionTrace-enhancements.md P1.1):
     /// 1. ToolCallId boundary (strongest) - Different tool calls split
     /// 2. TriggeredByTool boundary - Different tools split
     /// 3. Time window boundary (2 seconds) - User operations backup
@@ -92,7 +92,7 @@ namespace MCPForUnity.Editor.ActionTrace.Query
         /// <summary>
         /// Determines if two events should be in different transactions.
         ///
-        /// Decision tree (from timeline-enhancements.md line 274-290):
+        /// Decision tree (from ActionTrace-enhancements.md line 274-290):
         /// - Priority 1: ToolCallId boundary (mandatory split if different)
         /// - Priority 2: TriggeredByTool boundary (mandatory split if different)
         /// - Priority 3: Time window (2 seconds default)
@@ -202,34 +202,31 @@ namespace MCPForUnity.Editor.ActionTrace.Query
         }
 
         /// <summary>
-        /// Extracts tool_call_id from event Payload.
-        /// Returns null if not present.
+        /// Extracts a string value from event Payload by key.
+        /// Returns null if not present or value is null.
         /// </summary>
-        private static string GetToolCallId(EditorEvent evt)
+        private static string GetPayloadString(EditorEvent evt, string key)
         {
             if (evt.Payload == null)
                 return null;
 
-            if (evt.Payload.TryGetValue("tool_call_id", out var toolCallId))
-                return toolCallId?.ToString();
+            if (evt.Payload.TryGetValue(key, out var value))
+                return value?.ToString();
 
             return null;
         }
 
         /// <summary>
+        /// Extracts tool_call_id from event Payload.
+        /// Returns null if not present.
+        /// </summary>
+        private static string GetToolCallId(EditorEvent evt) => GetPayloadString(evt, "tool_call_id");
+
+        /// <summary>
         /// Extracts triggered_by_tool from event Payload.
         /// Returns null if not present.
         /// </summary>
-        private static string GetTriggeredByTool(EditorEvent evt)
-        {
-            if (evt.Payload == null)
-                return null;
-
-            if (evt.Payload.TryGetValue("triggered_by_tool", out var toolName))
-                return toolName?.ToString();
-
-            return null;
-        }
+        private static string GetTriggeredByTool(EditorEvent evt) => GetPayloadString(evt, "triggered_by_tool");
     }
 
     /// <summary>
@@ -240,7 +237,7 @@ namespace MCPForUnity.Editor.ActionTrace.Query
     /// - User rapid operations (e.g., 5 component additions in 1.5s)
     /// - Undo group alignment (one Ctrl+Z = one AtomicOperation)
     ///
-    /// From timeline-enhancements.md P1.1, line 189-198.
+    /// From ActionTrace-enhancements.md P1.1, line 189-198.
     /// </summary>
     public sealed class AtomicOperation
     {
@@ -281,7 +278,7 @@ namespace MCPForUnity.Editor.ActionTrace.Query
 
         /// <summary>
         /// Tool name that triggered this transaction.
-        /// Examples: "manage_gameobject", "add_timeline_note"
+        /// Examples: "manage_gameobject", "add_ActionTrace_note"
         /// Null for user manual operations.
         /// </summary>
         public string TriggeredByTool { get; set; }

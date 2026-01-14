@@ -26,7 +26,7 @@ namespace MCPForUnity.Editor.ActionTrace.Semantics
         /// - Medium (0.4-0.6): GameObject operations, Asset imports
         /// - Low (0.1-0.3): Hierarchy changes, Play mode toggles
         ///
-        /// Default behavior: get_timeline only returns events with score >= 0.4 (medium+)
+        /// Default behavior: get_action_Trace only returns events with score >= 0.4 (medium+)
         /// unless include_low_importance=true is specified.
         /// </summary>
         public float Score(EditorEvent evt)

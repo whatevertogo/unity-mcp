@@ -30,7 +30,7 @@ namespace MCPForUnity.Editor.ActionTrace.Core
     ///   are merged within a short time window to reduce noise
     /// - Same event type + same target + same property path within merge window = single event
     ///
-    /// Settings: Controlled by TimelineSettings asset.
+    /// Settings: Controlled by ActionTraceSettings asset.
     /// </summary>
     public static class EventStore
     {
@@ -87,9 +87,14 @@ namespace MCPForUnity.Editor.ActionTrace.Core
 
         /// <summary>
         /// Record a new event. Must be called from main thread.
-        /// Note: The main thread check uses a captured thread ID from static initialization.
-        /// After domain reload, this may be re-initialized on a different managed thread.
-        /// This assertion is for development debugging only.
+        ///
+        /// Returns:
+        /// - New sequence number for newly recorded events
+        /// - Existing sequence number when events are merged (same type/target/property within merge window)
+        /// - -1 when event is rejected by importance filter
+        ///
+        /// To detect merging, check if the returned sequence matches a previously recorded event,
+        /// or inspect the event's payload for the "merge_count" field (present when merge_count > 0).
         ///
         /// Thread safety: Write operations are protected by _queryLock for defensive
         /// programming, even though Record is expected to be called from main thread only.
@@ -98,7 +103,7 @@ namespace MCPForUnity.Editor.ActionTrace.Core
         /// type, target, and property path will be merged into the previous event instead
         /// of creating a new entry. This reduces noise from actions like dragging sliders.
         ///
-        /// Importance filtering: Events below TimelineSettings.MinImportanceForRecording
+        /// Importance filtering: Events below ActionTraceSettings.MinImportanceForRecording
         /// are silently rejected at the store level (not just UI filtering).
         /// </summary>
         public static long Record(EditorEvent @event)
@@ -423,7 +428,7 @@ namespace MCPForUnity.Editor.ActionTrace.Core
         /// <summary>
         /// Clear all events and context mappings (for testing).
         /// WARNING: This is destructive and cannot be undone.
-        /// All timeline history and context associations will be lost.
+        /// All ActionTrace history and context associations will be lost.
         /// </summary>
         public static void Clear()
         {
@@ -794,7 +799,7 @@ namespace MCPForUnity.Editor.ActionTrace.Core
                         UnityEngine.Debug.LogWarning(
                             $"[EventStore] Stored schema version {state.SchemaVersion} is newer " +
                             $"than current version {CurrentSchemaVersion}. Data may not load correctly. " +
-                            $"Consider updating the Timeline system.");
+                            $"Consider updating the ActionTrace system.");
                     }
                     else if (state.SchemaVersion < CurrentSchemaVersion)
                     {

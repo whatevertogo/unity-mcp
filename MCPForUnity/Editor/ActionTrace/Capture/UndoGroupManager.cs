@@ -12,18 +12,18 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
     /// - Enables one Ctrl+Z to undo an entire AI tool call
     /// - Works with TransactionAggregator to provide atomic operation semantics
     ///
-    /// Usage (from timeline-enhancements.md line 320-336):
+    /// Usage (from ActionTrace-enhancements.md line 320-336):
     ///   UndoGroupManager.BeginToolCall("manage_gameobject", "abc123");
     ///   // ... perform operations ...
     ///   UndoGroupManager.EndToolCall();
     ///
-    /// Integration with add_timeline_note:
+    /// Integration with add_ActionTrace_note:
     /// - When AI adds a note with is_transaction_end=true,
     ///   automatically collapses Undo operations since BeginToolCall
     ///
     /// Architecture notes:
     /// - This is an optional enhancement for better UX
-    /// - Does not affect Timeline event recording
+    /// - Does not affect ActionTrace event recording
     /// - Independent of OperationContext (tracks Undo state, not tool context)
     /// </summary>
     public static class UndoGroupManager
@@ -146,7 +146,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         }
 
         /// <summary>
-        /// Integration with add_timeline_note.
+        /// Integration with add_ActionTrace_note.
         ///
         /// When AI adds a note with is_transaction_end=true,
         /// automatically end the current Undo group.
@@ -160,7 +160,7 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
         /// Returns:
         ///   The Undo group name that was set (or current group name if not ending)
         /// </summary>
-        public static string HandleTimelineNote(string note, bool isTransactionEnd)
+        public static string HandleActionTraceNote(string note, bool isTransactionEnd)
         {
             string groupName;
 
