@@ -19,6 +19,7 @@ namespace MCPForUnity.Editor.Timeline.Query
             {
                 EventTypes.ComponentAdded => SummarizeComponentAdded(evt),
                 EventTypes.PropertyModified => SummarizePropertyModified(evt),
+                EventTypes.SelectionPropertyModified => SummarizeSelectionPropertyModified(evt),
                 EventTypes.HierarchyChanged => "Scene hierarchy changed",
                 EventTypes.AssetImported => SummarizeAssetImported(evt),
                 EventTypes.AssetDeleted => SummarizeAssetDeleted(evt),
@@ -209,6 +210,18 @@ namespace MCPForUnity.Editor.Timeline.Query
             }
 
             return valueStr;
+        }
+
+        /// <summary>
+        /// P2.4: Generate a human-readable summary for SelectionPropertyModified events.
+        /// Similar to PropertyModified but with selection context emphasized.
+        /// Format: "Changed {ComponentType}.{PropertyPath} from {StartValue} to {EndValue} (selected)"
+        /// </summary>
+        private static string SummarizeSelectionPropertyModified(EditorEvent evt)
+        {
+            // Reuse PropertyModified logic but add selection indicator
+            string baseSummary = SummarizePropertyModified(evt);
+            return $"{baseSummary} (selected)";
         }
 
         /// <summary>

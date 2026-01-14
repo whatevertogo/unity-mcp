@@ -15,6 +15,7 @@ namespace MCPForUnity.Editor.Timeline.Core
 
         // Property events (P0: Property-Level Tracking)
         public const string PropertyModified = "PropertyModified";
+        public const string SelectionPropertyModified = "SelectionPropertyModified";
 
         // GameObject events
         public const string GameObjectCreated = "GameObjectCreated";

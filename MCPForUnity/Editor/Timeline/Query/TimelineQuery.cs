@@ -188,6 +188,7 @@ namespace MCPForUnity.Editor.Timeline.Query
             {
                 "ComponentAdded" => new Color(0.3f, 0.8f, 0.3f),
                 "PropertyModified" => new Color(0.3f, 0.6f, 0.8f),
+                "SelectionPropertyModified" => new Color(0.5f, 0.8f, 0.9f),  // Light blue for selected property changes
                 "GameObjectCreated" => new Color(0.8f, 0.3f, 0.8f),
                 "HierarchyChanged" => new Color(0.8f, 0.8f, 0.3f),
                 "AINote" => new Color(0.3f, 0.8f, 0.8f),

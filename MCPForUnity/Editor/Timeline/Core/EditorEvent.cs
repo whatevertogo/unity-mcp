@@ -157,22 +157,11 @@ namespace MCPForUnity.Editor.Timeline.Core
         /// <summary>
         /// Compute the summary for this event.
         /// This is called by GetSummary() or Dehydrate().
+        /// Delegates to EventSummarizer for rich summaries.
         /// </summary>
         private string ComputeSummary()
         {
-            // Import EventSummarizer here to avoid circular dependency
-            // For now, use a simple summary
-            if (Payload == null)
-                return $"{Type} on {TargetId}";
-
-            // Try to get a more detailed summary from payload
-            if (Payload.TryGetValue("name", out var name) && name != null)
-                return $"{Type}: {name}";
-
-            if (Payload.TryGetValue("property", out var prop) && prop != null)
-                return $"{Type}: {TargetId}.{prop}";
-
-            return $"{Type} on {TargetId}";
+            return MCPForUnity.Editor.Timeline.Query.EventSummarizer.Summarize(this);
         }
 
         /// <summary>
