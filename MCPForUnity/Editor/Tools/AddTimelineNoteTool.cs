@@ -29,6 +29,54 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("add_timeline_note")]
     public static class AddTimelineNoteTool
     {
+        /// <summary>
+        /// Parameters for add_timeline_note tool.
+        /// </summary>
+        public class Parameters
+        {
+            /// <summary>
+            /// The note text to record
+            /// </summary>
+            [ToolParameter("The note text to record", Required = true)]
+            public string Note { get; set; }
+
+            /// <summary>
+            /// Identifies which AI wrote the note (default: "unknown")
+            /// </summary>
+            [ToolParameter("Identifies which AI wrote the note", Required = false, DefaultValue = "unknown")]
+            public string AgentId { get; set; } = "unknown";
+
+            /// <summary>
+            /// Groups all notes from a single task
+            /// </summary>
+            [ToolParameter("Groups all notes from a single task (e.g., 'refactor-player-movement')", Required = false)]
+            public string TaskId { get; set; }
+
+            /// <summary>
+            /// Tracks continuity across sessions
+            /// </summary>
+            [ToolParameter("Tracks continuity across sessions", Required = false)]
+            public string ConversationId { get; set; }
+
+            /// <summary>
+            /// Intent or purpose of the note
+            /// </summary>
+            [ToolParameter("Intent or purpose of the note", Required = false)]
+            public string Intent { get; set; }
+
+            /// <summary>
+            /// Model identifier of the AI agent
+            /// </summary>
+            [ToolParameter("Model identifier of the AI agent", Required = false)]
+            public string AgentModel { get; set; }
+
+            /// <summary>
+            /// Related event sequences to link with this note
+            /// </summary>
+            [ToolParameter("Related event sequences to link with this note", Required = false)]
+            public long[] RelatedSequences { get; set; }
+        }
+
         public static object HandleCommand(JObject @params)
         {
             try
@@ -40,9 +88,10 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse("Note text is required.");
                 }
 
-                string agentId = @params["agent_id"]?.ToString() ?? "unknown";
-                string taskId = @params["task_id"]?.ToString();
-                string conversationId = @params["conversation_id"]?.ToString();
+                // Support both snake_case (legacy) and camelCase (normalized by batch_execute)
+                string agentId = @params["agent_id"]?.ToString() ?? @params["agentId"]?.ToString() ?? "unknown";
+                string taskId = @params["task_id"]?.ToString() ?? @params["taskId"]?.ToString();
+                string conversationId = @params["conversation_id"]?.ToString() ?? @params["conversationId"]?.ToString();
 
                 // Build payload with all fields
                 var payload = new Dictionary<string, object>
@@ -63,23 +112,26 @@ namespace MCPForUnity.Editor.Tools
                     payload["conversation_id"] = conversationId;
                 }
 
-                // Optional fields
-                if (@params["intent"] != null)
+                // Optional fields - support both snake_case and camelCase
+                var intentToken = @params["intent"] ?? @params["Intent"];
+                if (intentToken != null)
                 {
-                    payload["intent"] = @params["intent"].ToString();
+                    payload["intent"] = intentToken.ToString();
                 }
 
-                if (@params["agent_model"] != null)
+                var agentModelToken = @params["agent_model"] ?? @params["agentModel"];
+                if (agentModelToken != null)
                 {
-                    payload["agent_model"] = @params["agent_model"].ToString();
+                    payload["agent_model"] = agentModelToken.ToString();
                 }
 
                 // Related event sequences (if explicitly linking to specific events)
-                if (@params["related_sequences"] != null)
+                var relatedSeqToken = @params["related_sequences"] ?? @params["relatedSequences"];
+                if (relatedSeqToken != null)
                 {
                     try
                     {
-                        var relatedSeqs = @params["related_sequences"].ToObject<long[]>();
+                        var relatedSeqs = relatedSeqToken.ToObject<long[]>();
                         if (relatedSeqs != null && relatedSeqs.Length > 0)
                         {
                             payload["related_sequences"] = relatedSeqs;

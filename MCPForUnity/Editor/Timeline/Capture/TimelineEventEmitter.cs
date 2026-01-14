@@ -321,6 +321,74 @@ namespace MCPForUnity.Editor.Timeline.Capture
             EmitEvent(EventTypes.BuildFailed, "Build", payload);
         }
 
+        // ========================================================================
+        // Asset Modification Events (for ManageAsset integration)
+        // ========================================================================
+
+        /// <summary>
+        /// Emit an asset modified event via MCP tool (manage_asset).
+        /// </summary>
+        public static void EmitAssetModified(string assetPath, string assetType, IReadOnlyDictionary<string, object> changes)
+        {
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                Debug.LogWarning("[TimelineEventEmitter] AssetModified with null path");
+                return;
+            }
+
+            var payload = new Dictionary<string, object>
+            {
+                ["path"] = assetPath,
+                ["asset_type"] = assetType ?? "Unknown",
+                ["changes"] = changes ?? new Dictionary<string, object>(),
+                ["source"] = "mcp_tool"  // Indicates this change came from an MCP tool call
+            };
+
+            EmitEvent(EventTypes.AssetModified, assetPath, payload);
+        }
+
+        /// <summary>
+        /// Emit an asset created event via MCP tool (manage_asset).
+        /// </summary>
+        public static void EmitAssetCreated(string assetPath, string assetType)
+        {
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                Debug.LogWarning("[TimelineEventEmitter] AssetCreated with null path");
+                return;
+            }
+
+            var payload = new Dictionary<string, object>
+            {
+                ["path"] = assetPath,
+                ["asset_type"] = assetType ?? "Unknown",
+                ["source"] = "mcp_tool"
+            };
+
+            EmitEvent(EventTypes.AssetCreated, assetPath, payload);
+        }
+
+        /// <summary>
+        /// Emit an asset deleted event via MCP tool (manage_asset).
+        /// </summary>
+        public static void EmitAssetDeleted(string assetPath, string assetType)
+        {
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                Debug.LogWarning("[TimelineEventEmitter] AssetDeleted with null path");
+                return;
+            }
+
+            var payload = new Dictionary<string, object>
+            {
+                ["path"] = assetPath,
+                ["asset_type"] = assetType ?? "Unknown",
+                ["source"] = "mcp_tool"
+            };
+
+            EmitEvent(EventTypes.AssetDeleted, assetPath, payload);
+        }
+
         /// <summary>
         /// Core event emission method.
         /// All events flow through this method, allowing for centralized error handling and logging.

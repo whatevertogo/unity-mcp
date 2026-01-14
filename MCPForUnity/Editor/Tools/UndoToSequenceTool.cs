@@ -24,13 +24,28 @@ namespace MCPForUnity.Editor.Tools
     /// - Only works if Undo history is intact (no domain reload)
     /// - Cannot redo after this operation (standard Ctrl+Y won't work)
     /// - Best used immediately after realizing a mistake
-    ///
-    /// Usage:
-    ///   undo_to_sequence(sequence_id=123)
     /// </summary>
     [McpForUnityTool("undo_to_sequence")]
     public static class UndoToSequenceTool
     {
+        /// <summary>
+        /// Parameters for undo_to_sequence tool.
+        /// </summary>
+        public class Parameters
+        {
+            /// <summary>
+            /// Target sequence number to revert to
+            /// </summary>
+            [ToolParameter("Target sequence number to revert to", Required = true)]
+            public long SequenceId { get; set; }
+
+            /// <summary>
+            /// If true, only calculate steps without executing
+            /// </summary>
+            [ToolParameter("If true, only calculate steps without executing", Required = false, DefaultValue = "false")]
+            public bool DryRun { get; set; } = false;
+        }
+
         /// <summary>
         /// Handles the undo_to_sequence command.
         ///

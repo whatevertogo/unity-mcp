@@ -40,6 +40,7 @@ namespace MCPForUnity.Editor.Timeline.Core
         public const string AssetCreated = "AssetCreated";
         public const string AssetDeleted = "AssetDeleted";
         public const string AssetMoved = "AssetMoved";
+        public const string AssetModified = "AssetModified";
 
         // Script events
         public const string ScriptCompiled = "ScriptCompiled";
