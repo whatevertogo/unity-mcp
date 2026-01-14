@@ -1,5 +1,5 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
-    <Style src="../Components/Common.uss" />
+    <Style src="Components/Common.uss" />
     <Style src="TimelineEditorWindow.uss" />
 
     <ui:VisualElement name="root-container" class="root-container">
@@ -10,6 +10,7 @@
             <uie:ToolbarToggle name="importance-toggle" text="Badges" />
             <uie:ToolbarToggle name="context-toggle" text="Context" />
             <uie:ToolbarSpacer flex="true" />
+            <uie:ToolbarButton name="settings-button" text="Settings" />
             <uie:ToolbarButton name="refresh-button" text="Refresh" />
             <uie:ToolbarButton name="clear-button" text="Clear" />
         </uie:Toolbar>

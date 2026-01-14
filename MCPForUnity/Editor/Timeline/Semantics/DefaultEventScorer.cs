@@ -1,3 +1,4 @@
+using System;
 using MCPForUnity.Editor.Timeline.Core;
 
 namespace MCPForUnity.Editor.Timeline.Semantics
@@ -8,6 +9,13 @@ namespace MCPForUnity.Editor.Timeline.Semantics
     /// </summary>
     public sealed class DefaultEventScorer : IEventScorer
     {
+        private static readonly Lazy<DefaultEventScorer> _instance = new(() => new DefaultEventScorer());
+
+        /// <summary>
+        /// Singleton instance for use in EventStore importance filtering.
+        /// </summary>
+        public static DefaultEventScorer Instance => _instance.Value;
+
         /// <summary>
         /// Calculate importance score for an event.
         /// Higher scores indicate more significant events.
@@ -37,33 +45,42 @@ namespace MCPForUnity.Editor.Timeline.Semantics
 
                 // ========== High (0.7-0.9) ==========
                 // Scripts and Scenes are project structure changes
-                EventTypes.AssetCreated or EventTypes.AssetImported when IsScript(evt) => 1.0f,
-                EventTypes.AssetCreated or EventTypes.AssetImported when IsScene(evt) => 0.9f,
+                EventTypes.AssetCreated or EventTypes.AssetImported when IsScript(evt) => 0.9f,
+                EventTypes.AssetCreated or EventTypes.AssetImported when IsScene(evt) => 0.7f,
                 EventTypes.AssetCreated or EventTypes.AssetImported when IsPrefab(evt) => 0.8f,
 
                 // Component and Property modifications (direct user actions)
                 EventTypes.ComponentRemoved => 0.7f,
+                EventTypes.SelectionPropertyModified => 0.7f,  // Selected object property changes are high priority
                 EventTypes.PropertyModified => 0.6f,  // P0 property-level tracking
                 EventTypes.ComponentAdded => 0.6f,
 
                 // Scene operations
                 EventTypes.SceneSaved => 0.8f,
+                EventTypes.SceneSaving => 0.5f,  // Scene saving in progress
                 EventTypes.SceneOpened => 0.7f,
+                EventTypes.NewSceneCreated => 0.6f,  // New scene creation
 
                 // Build operations (success is important but less than failure)
                 EventTypes.BuildStarted => 0.9f,
                 EventTypes.BuildCompleted => 1.0f,
+
+                // Destructive asset operations (high importance)
+                EventTypes.AssetDeleted => 0.8f,  // Permanent deletion is critical
 
                 // ========== Medium (0.4-0.6) ==========
                 // GameObject operations (structure changes)
                 EventTypes.GameObjectDestroyed => 0.6f,
                 EventTypes.GameObjectCreated => 0.5f,
                 EventTypes.AssetCreated or EventTypes.AssetImported => 0.5f,
+                EventTypes.AssetModified => 0.4f,  // Asset content changes
                 EventTypes.ScriptCompiled => 0.4f,
 
                 // ========== Low (0.1-0.3) ==========
                 // Hierarchy changes are noise (happen very frequently)
                 EventTypes.HierarchyChanged => 0.2f,
+                EventTypes.SelectionChanged => 0.1f,  // Selection changes happen very frequently
+                EventTypes.AssetMoved => 0.3f,  // Moving assets within project
                 EventTypes.PlayModeChanged => 0.3f,
 
                 // Default low importance for unknown types

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Timeline.Context;
+using MCPForUnity.Editor.Timeline.Semantics;
 using UnityEditor;
 
 namespace MCPForUnity.Editor.Timeline.Core
@@ -23,17 +24,31 @@ namespace MCPForUnity.Editor.Timeline.Core
     /// - Hot events (latest 100): Full payload retained
     /// - Cold events (older than 100): Automatically dehydrated (payload = null)
     /// - This reduces memory from ~10MB to <1MB for 1000 events
+    ///
+    /// Event merging (Deduplication):
+    /// - High-frequency events (PropertyModified, SelectionPropertyModified, HierarchyChanged)
+    ///   are merged within a short time window to reduce noise
+    /// - Same event type + same target + same property path within merge window = single event
+    ///
+    /// Settings: Controlled by TimelineSettings asset.
     /// </summary>
     public static class EventStore
     {
-        private const int MaxEvents = 1000;
         private const int MaxContextMappings = 2000;
-        private const int HotEventCount = 100;  // Keep full payload for latest 100 events
         private const string StateKey = "timeline_events";
+
+        // Event types that are eligible for merging (high-frequency, noisy events)
+        private static readonly HashSet<string> MergeableEventTypes = new()
+        {
+            EventTypes.PropertyModified,
+            EventTypes.SelectionPropertyModified,
+            EventTypes.HierarchyChanged,
+            EventTypes.SelectionChanged
+        };
 
         // Schema version for migration support
         // Increment when breaking changes are made to the storage format
-        private const int CurrentSchemaVersion = 2;  // Incremented for dehydration support
+        private const int CurrentSchemaVersion = 4;  // Incremented for settings integration
 
         private static readonly List<EditorEvent> _events = new();
         private static readonly List<ContextMapping> _contextMappings = new();
@@ -46,6 +61,10 @@ namespace MCPForUnity.Editor.Timeline.Core
         // Batch notification: accumulate pending events and notify in single delayCall
         private static readonly List<EditorEvent> _pendingNotifications = new();
         private static bool _notifyScheduled;
+
+        // Event merging state (tracks last event for merge detection)
+        private static EditorEvent _lastRecordedEvent;
+        private static long _lastRecordedTime;
         
         // Main thread detection: Use Unity's EditorApplication.isUpdating for runtime checks.
         // This is more robust than capturing a thread ID at static initialization time,
@@ -74,9 +93,37 @@ namespace MCPForUnity.Editor.Timeline.Core
         ///
         /// Thread safety: Write operations are protected by _queryLock for defensive
         /// programming, even though Record is expected to be called from main thread only.
+        ///
+        /// Event merging: High-frequency events within MergeWindowMs that have the same
+        /// type, target, and property path will be merged into the previous event instead
+        /// of creating a new entry. This reduces noise from actions like dragging sliders.
+        ///
+        /// Importance filtering: Events below TimelineSettings.MinImportanceForRecording
+        /// are silently rejected at the store level (not just UI filtering).
         /// </summary>
         public static long Record(EditorEvent @event)
         {
+            // Apply importance filter at store level
+            // This prevents low-importance events from being recorded at all
+            var settings = TimelineSettings.Instance;
+            if (settings != null)
+            {
+                float importance = DefaultEventScorer.Instance.Score(@event);
+                if (importance < settings.MinImportanceForRecording)
+                {
+                    // Event rejected due to low importance
+                    return -1;
+                }
+            }
+
+            // Check if event merging is enabled and this event should be merged
+            if (settings?.EnableEventMerging != false && ShouldMergeWithLast(@event))
+            {
+                // Merge with last event: update timestamp and end_value
+                MergeWithLastEvent(@event);
+                return _lastRecordedEvent.Sequence;
+            }
+
             // Note: EditorApplication.isUpdating check removed because it was too strict.
             // Many valid callbacks (delayCall, AssetPostprocessor, hierarchyChanged) run
             // on the main thread but outside the update loop. The lock(_queryLock) provides
@@ -94,6 +141,14 @@ namespace MCPForUnity.Editor.Timeline.Core
                 payload: @event.Payload
             );
 
+            // Store reference for merge detection
+            _lastRecordedEvent = evtWithSequence;
+            _lastRecordedTime = @event.TimestampUnixMs;
+
+            // Capture settings limits before lock
+            int hotEventCount = settings?.HotEventCount ?? 100;
+            int maxEvents = settings?.MaxEvents ?? 1000;
+
             // Write lock: protect _events and _contextMappings mutations
             lock (_queryLock)
             {
@@ -101,15 +156,15 @@ namespace MCPForUnity.Editor.Timeline.Core
 
                 // Auto-dehydrate old events to save memory
                 // Keep latest HotEventCount events with full payload, dehydrate the rest
-                if (_events.Count > HotEventCount)
+                if (_events.Count > hotEventCount)
                 {
-                    DehydrateOldEvents();
+                    DehydrateOldEvents(hotEventCount);
                 }
 
                 // Trim oldest events if over limit (batch remove is more efficient than loop RemoveAt)
-                if (_events.Count > MaxEvents)
+                if (_events.Count > maxEvents)
                 {
-                    int removeCount = _events.Count - MaxEvents;
+                    int removeCount = _events.Count - maxEvents;
                     // Capture sequences to cascade delete mappings
                     var removedSequences = new HashSet<long>();
                     for (int i = 0; i < removeCount; i++)
@@ -233,13 +288,13 @@ namespace MCPForUnity.Editor.Timeline.Core
         }
 
         /// <summary>
-        /// Dehydrate old events (beyond HotEventCount) to save memory.
+        /// Dehydrate old events (beyond hotEventCount) to save memory.
         /// This is called automatically by Record().
         /// </summary>
-        private static void DehydrateOldEvents()
+        private static void DehydrateOldEvents(int hotEventCount)
         {
             // Find events that need dehydration (not already dehydrated and beyond hot count)
-            for (int i = 0; i < _events.Count - HotEventCount; i++)
+            for (int i = 0; i < _events.Count - hotEventCount; i++)
             {
                 var evt = _events[i];
                 if (evt != null && !evt.IsDehydrated && evt.Payload != null)
@@ -248,6 +303,121 @@ namespace MCPForUnity.Editor.Timeline.Core
                     _events[i] = evt.Dehydrate();
                 }
             }
+        }
+
+        // ========================================================================
+        // Event Merging (Deduplication)
+        // ========================================================================
+
+        /// <summary>
+        /// Checks if the given event should be merged with the last recorded event.
+        /// Merging criteria:
+        /// - Same event type (and type is mergeable)
+        /// - Same target ID
+        /// - Same property path (for property modification events)
+        /// - Within merge time window
+        /// </summary>
+        private static bool ShouldMergeWithLast(EditorEvent evt)
+        {
+            if (_lastRecordedEvent == null)
+                return false;
+
+            var settings = TimelineSettings.Instance;
+            int mergeWindowMs = settings?.MergeWindowMs ?? 100;
+
+            // Time window check
+            long timeDelta = evt.TimestampUnixMs - _lastRecordedTime;
+            if (timeDelta > mergeWindowMs || timeDelta < 0)
+                return false;
+
+            // Type check: must be the same mergeable type
+            if (evt.Type != _lastRecordedEvent.Type)
+                return false;
+
+            if (!MergeableEventTypes.Contains(evt.Type))
+                return false;
+
+            // Target check: must be the same target
+            if (evt.TargetId != _lastRecordedEvent.TargetId)
+                return false;
+
+            // Property path check: for property modification events, must be same property
+            string currentPropertyPath = GetPropertyPathFromPayload(evt.Payload);
+            string lastPropertyPath = GetPropertyPathFromPayload(_lastRecordedEvent.Payload);
+            if (!string.Equals(currentPropertyPath, lastPropertyPath, StringComparison.Ordinal))
+                return false;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Merges the new event with the last recorded event.
+        /// Updates the last event's timestamp and end_value (if applicable).
+        /// </summary>
+        private static void MergeWithLastEvent(EditorEvent evt)
+        {
+            if (_lastRecordedEvent == null)
+                return;
+
+            // Update timestamp to reflect the most recent activity
+            _lastRecordedTime = evt.TimestampUnixMs;
+
+            // For property modification events, update the end_value
+            // This allows tracking the start and end of a continuous change (e.g., slider drag)
+            if (evt.Payload != null && _lastRecordedEvent.Payload != null)
+            {
+                var newPayload = new Dictionary<string, object>(_lastRecordedEvent.Payload);
+
+                // Update end_value with the new value
+                if (evt.Payload.TryGetValue("end_value", out var newValue))
+                {
+                    newPayload["end_value"] = newValue;
+                }
+
+                // Update timestamp in payload
+                newPayload["timestamp"] = evt.TimestampUnixMs;
+
+                // Add merge_count to track how many events were merged
+                int mergeCount = 1;
+                if (_lastRecordedEvent.Payload.TryGetValue("merge_count", out var existingCount))
+                {
+                    mergeCount = (int)existingCount + 1;
+                }
+                newPayload["merge_count"] = mergeCount;
+
+                // Update the last event's payload (requires creating new EditorEvent)
+                int lastEventIndex = _events.Count - 1;
+                if (lastEventIndex >= 0)
+                {
+                    _events[lastEventIndex] = new EditorEvent(
+                        sequence: _lastRecordedEvent.Sequence,
+                        timestampUnixMs: evt.TimestampUnixMs,
+                        type: _lastRecordedEvent.Type,
+                        targetId: _lastRecordedEvent.TargetId,
+                        payload: newPayload
+                    );
+                    _lastRecordedEvent = _events[lastEventIndex];
+                }
+            }
+
+            // Schedule save since we modified the last event
+            _isDirty = true;
+            ScheduleSave();
+        }
+
+        /// <summary>
+        /// Extracts the property path from an event payload.
+        /// Used for merge detection of property modification events.
+        /// </summary>
+        private static string GetPropertyPathFromPayload(IReadOnlyDictionary<string, object> payload)
+        {
+            if (payload == null)
+                return null;
+
+            if (payload.TryGetValue("property_path", out var propertyPath))
+                return propertyPath as string;
+
+            return null;
         }
 
         /// <summary>
@@ -289,9 +459,13 @@ namespace MCPForUnity.Editor.Timeline.Core
         {
             lock (_queryLock)
             {
+                var settings = TimelineSettings.Instance;
+                int hotEventCount = settings?.HotEventCount ?? 100;
+                int maxEvents = settings?.MaxEvents ?? 1000;
+
                 int totalEvents = _events.Count;
-                int hotEvents = Math.Min(totalEvents, HotEventCount);
-                int coldEvents = Math.Max(0, totalEvents - HotEventCount);
+                int hotEvents = Math.Min(totalEvents, hotEventCount);
+                int coldEvents = Math.Max(0, totalEvents - hotEventCount);
 
                 int hydratedCount = 0;
                 int dehydratedCount = 0;
@@ -317,7 +491,7 @@ namespace MCPForUnity.Editor.Timeline.Core
                 double totalEstimatedMB = totalEstimatedBytes / (1024.0 * 1024.0);
 
                 return $"EventStore Memory Diagnostics:\n" +
-                       $"  Total Events: {totalEvents}/{MaxEvents}\n" +
+                       $"  Total Events: {totalEvents}/{maxEvents}\n" +
                        $"  Hot Events (full payload): {hotEvents}\n" +
                        $"  Cold Events (dehydrated): {coldEvents}\n" +
                        $"  Hydrated: {hydratedCount}\n" +

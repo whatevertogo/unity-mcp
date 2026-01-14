@@ -23,20 +23,22 @@ namespace MCPForUnity.Editor.Windows
         private ToolbarToggle importanceToggle;
         private ToolbarToggle contextToggle;
         private ToolbarMenu filterMenu;
+        private ToolbarButton settingsButton;
+        private ToolbarButton refreshButton;
+        private ToolbarButton clearButton;
 
         // Data
         private readonly List<TimelineViewItem> currentEvents = new();
         private TimelineQuery timelineQuery;
 
         private string searchText = string.Empty;
-        private float minImportance = 0.4f;
+        private float minImportance;  // Default: AI can see (uses TimelineSettings.MinImportanceForRecording)
         private bool showSemantics;
         private bool showContext;
 
         private double lastRefreshTime;
         private const double RefreshInterval = 1.0;
 
-        [MenuItem("Window/MCP/Timeline")]
         public static void ShowWindow()
         {
             var window = GetWindow<TimelineEditorWindow>("TimeLine");
@@ -142,6 +144,9 @@ namespace MCPForUnity.Editor.Windows
 
             timelineQuery = new TimelineQuery();
 
+            // Initialize minImportance from TimelineSettings (AI can see)
+            minImportance = Timeline.Core.TimelineSettings.Instance?.MinImportanceForRecording ?? 0.4f;
+
             RefreshEvents();
             UpdateStatus();
         }
@@ -157,6 +162,9 @@ namespace MCPForUnity.Editor.Windows
             importanceToggle = rootVisualElement.Q<ToolbarToggle>("importance-toggle");
             contextToggle = rootVisualElement.Q<ToolbarToggle>("context-toggle");
             filterMenu = rootVisualElement.Q<ToolbarMenu>("filter-menu");
+            settingsButton = rootVisualElement.Q<ToolbarButton>("settings-button");
+            refreshButton = rootVisualElement.Q<ToolbarButton>("refresh-button");
+            clearButton = rootVisualElement.Q<ToolbarButton>("clear-button");
         }
 
         private void SetupListView()
@@ -228,15 +236,53 @@ namespace MCPForUnity.Editor.Windows
                 RefreshEvents();
             });
 
+            filterMenu?.menu.AppendAction("AI Can See", _ => SetImportanceFromSettings());
+            filterMenu?.menu.AppendAction("Low+", _ => SetImportance(0f));
             filterMenu?.menu.AppendAction("Medium+", _ => SetImportance(0.4f));
             filterMenu?.menu.AppendAction("High+", _ => SetImportance(0.7f));
-            filterMenu?.menu.AppendAction("All", _ => SetImportance(0f));
+
+            settingsButton?.RegisterCallback<ClickEvent>(_ => OnSettingsClicked());
+            refreshButton?.RegisterCallback<ClickEvent>(_ => OnRefreshClicked());
+            clearButton?.RegisterCallback<ClickEvent>(_ => OnClearClicked());
         }
 
         private void SetImportance(float value)
         {
             minImportance = value;
             RefreshEvents();
+        }
+
+        private void SetImportanceFromSettings()
+        {
+            var settings = Timeline.Core.TimelineSettings.Instance;
+            minImportance = settings != null ? settings.MinImportanceForRecording : 0.4f;
+            RefreshEvents();
+        }
+
+        private void OnRefreshClicked()
+        {
+            // Force immediate refresh and update lastRefreshTime
+            lastRefreshTime = EditorApplication.timeSinceStartup;
+            RefreshEvents();
+            Debug.Log("[TimelineEditorWindow] Refresh clicked - events refreshed");
+        }
+
+        private void OnSettingsClicked()
+        {
+            // Open the TimelineSettings inspector
+            Timeline.Core.TimelineSettings.ShowSettingsWindow();
+        }
+
+        private void OnClearClicked()
+        {
+            // Clear all events from EventStore
+            EventStore.Clear();
+            // Clear current display
+            currentEvents.Clear();
+            eventListView.RefreshItems();
+            detailScrollView.Clear();
+            UpdateStatus();
+            Debug.Log("[TimelineEditorWindow] Clear clicked - all events cleared");
         }
 
         private void RefreshEvents()

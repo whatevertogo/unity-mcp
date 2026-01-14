@@ -109,10 +109,11 @@ namespace MCPForUnity.Editor.Timeline.Capture
                     continue;
                 }
 
-                // Check if this modification targets the currently selected object
+                // Check if this modification targets the currently selected object or its components
                 string targetGlobalId = GlobalIdHelper.ToGlobalIdString(target);
-                Debug.Log($"[SelectionPropertyTracker] targetId={targetGlobalId}, selectionId={_currentSelectionGlobalId}, match={targetGlobalId == _currentSelectionGlobalId}");
-                if (targetGlobalId != _currentSelectionGlobalId)
+                bool isMatch = IsTargetMatchSelection(target, targetGlobalId);
+                Debug.Log($"[SelectionPropertyTracker] targetId={targetGlobalId}, selectionId={_currentSelectionGlobalId}, match={isMatch}");
+                if (!isMatch)
                     continue;
 
                 var propertyPath = GetPropertyPathFromUndoMod(undoMod);
@@ -264,6 +265,27 @@ namespace MCPForUnity.Editor.Timeline.Capture
         }
 
         #endregion
+
+        /// <summary>
+        /// Checks if the modified target matches the current selection.
+        /// Handles both direct GameObject matches and Component-on-selected-GameObject matches.
+        /// </summary>
+        private static bool IsTargetMatchSelection(UnityEngine.Object target, string targetGlobalId)
+        {
+            // Direct match
+            if (targetGlobalId == _currentSelectionGlobalId)
+                return true;
+
+            // If target is a Component, check if its owner GameObject matches the selection
+            if (target is Component comp)
+            {
+                string gameObjectId = GlobalIdHelper.ToGlobalIdString(comp.gameObject);
+                if (gameObjectId == _currentSelectionGlobalId)
+                    return true;
+            }
+
+            return false;
+        }
 
         #region Property Formatting Helpers
 
