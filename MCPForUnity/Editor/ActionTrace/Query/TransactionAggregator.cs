@@ -15,7 +15,7 @@ namespace MCPForUnity.Editor.ActionTrace.Query
     /// Aggregation priority (from document ActionTrace-enhancements.md P1.1):
     /// 1. ToolCallId boundary (strongest) - Different tool calls split
     /// 2. TriggeredByTool boundary - Different tools split
-    /// 3. Time window boundary (2 seconds) - User operations backup
+    /// 3. Time window boundary (from ActionTraceSettings.TransactionWindowMs) - User operations backup
     ///
     /// Design principles:
     /// - Query-time computation (does not modify stored events)
@@ -29,10 +29,10 @@ namespace MCPForUnity.Editor.ActionTrace.Query
     public static class TransactionAggregator
     {
         /// <summary>
-        /// Default time window for user operation aggregation.
+        /// Default time window for user operation aggregation (fallback if settings unavailable).
         /// Events within 2 seconds are grouped if no ToolId information exists.
         /// </summary>
-        private const long TransactionWindowMs = 2000;
+        private const long DefaultTransactionWindowMs = 2000;
 
         /// <summary>
         /// Aggregates a flat list of events into logical transactions.
@@ -95,10 +95,14 @@ namespace MCPForUnity.Editor.ActionTrace.Query
         /// Decision tree (from ActionTrace-enhancements.md line 274-290):
         /// - Priority 1: ToolCallId boundary (mandatory split if different)
         /// - Priority 2: TriggeredByTool boundary (mandatory split if different)
-        /// - Priority 3: Time window (2 seconds default)
+        /// - Priority 3: Time window (from ActionTraceSettings.TransactionWindowMs, default 2000ms)
         /// </summary>
         private static bool ShouldSplit(EditorEvent first, EditorEvent current)
         {
+            // Get transaction window from settings, with fallback to default
+            var settings = ActionTraceSettings.Instance;
+            long transactionWindowMs = settings?.TransactionWindowMs ?? DefaultTransactionWindowMs;
+
             // Extract ToolCallId from Payload (if exists)
             string firstToolCallId = GetToolCallId(first);
             string currentToolCallId = GetToolCallId(current);
@@ -130,9 +134,9 @@ namespace MCPForUnity.Editor.ActionTrace.Query
             }
 
             // ========== Priority 3: Time window (user operations) ==========
-            // If no ToolId information, use 2-second time window
+            // If no ToolId information, use configured time window
             long timeDelta = current.TimestampUnixMs - first.TimestampUnixMs;
-            return timeDelta > TransactionWindowMs;
+            return timeDelta > transactionWindowMs;
         }
 
         /// <summary>

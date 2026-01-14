@@ -5,6 +5,7 @@ using UnityEngine;
 using Newtonsoft.Json;
 using MCPForUnity.Editor.ActionTrace.Core;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.ActionTrace.Helpers;
 
 namespace MCPForUnity.Editor.ActionTrace.Capture
 {
@@ -147,92 +148,45 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
             return modifications;
         }
 
-        /// <summary>
-        /// Generic reflection helper to extract nested values from UndoPropertyModification.
-        /// Traverses dot-separated property paths like "propertyModification.target".
-        /// </summary>
-        private static object GetNestedReflectionValue(object root, string path)
-        {
-            if (root == null || string.IsNullOrEmpty(path))
-                return null;
-
-            var parts = path.Split('.');
-            object current = root;
-
-            foreach (var part in parts)
-            {
-                if (current == null) return null;
-
-                // Try property first (for currentValue, previousValue)
-                var prop = current.GetType().GetProperty(part);
-                if (prop != null)
-                {
-                    current = prop.GetValue(current);
-                    continue;
-                }
-
-                // Try field (for propertyModification, target, value, etc.)
-                var field = current.GetType().GetField(part);
-                if (field != null)
-                {
-                    current = field.GetValue(current);
-                    continue;
-                }
-
-                return null;
-            }
-
-            return current;
-        }
+        #region UndoPropertyModification Helpers (via UndoReflectionHelper)
 
         /// <summary>
-        /// Attempts to extract the previous value from an UndoPropertyModification via reflection.
-        /// Mirrors the approach used in GetCurrentValueFromUndoMod but targets the previous value.
+        /// Extracts the previous value from an UndoPropertyModification.
+        /// Uses shared UndoReflectionHelper for reflection logic.
         /// </summary>
         private static object GetPreviousValueFromUndoMod(UndoPropertyModification undoMod)
         {
-            // Try direct 'previousValue' property first
-            var result = GetNestedReflectionValue(undoMod, "previousValue");
-            if (result != null) return result;
-
-            // Try 'propertyModification.previousValue'
-            result = GetNestedReflectionValue(undoMod, "propertyModification.previousValue");
-            if (result != null) return result;
-
-            // Some Unity versions use 'propertyModification.value.before'
-            return GetNestedReflectionValue(undoMod, "propertyModification.value.before");
+            return UndoReflectionHelper.GetPreviousValue(undoMod);
         }
 
         /// <summary>
-        /// Extracts the target object from UndoPropertyModification.
+        /// Extracts the target object from an UndoPropertyModification.
+        /// Uses shared UndoReflectionHelper for reflection logic.
         /// </summary>
         private static UnityEngine.Object GetTargetFromUndoMod(UndoPropertyModification undoMod)
         {
-            var result = GetNestedReflectionValue(undoMod, "propertyModification.target");
-            return result as UnityEngine.Object;
+            return UndoReflectionHelper.GetTarget(undoMod);
         }
 
         /// <summary>
-        /// Extracts the property path from UndoPropertyModification.
+        /// Extracts the property path from an UndoPropertyModification.
+        /// Uses shared UndoReflectionHelper for reflection logic.
         /// </summary>
         private static string GetPropertyPathFromUndoMod(UndoPropertyModification undoMod)
         {
-            var result = GetNestedReflectionValue(undoMod, "propertyModification.propertyPath");
-            return result as string;
+            return UndoReflectionHelper.GetPropertyPath(undoMod);
         }
 
         /// <summary>
-        /// Extracts the current value from UndoPropertyModification.
+        /// Extracts the current value from an UndoPropertyModification.
+        /// Uses shared UndoReflectionHelper for reflection logic.
         /// </summary>
         private static object GetCurrentValueFromUndoMod(UndoPropertyModification undoMod)
         {
-            // Try direct 'currentValue' property first
-            var result = GetNestedReflectionValue(undoMod, "currentValue");
-            if (result != null) return result;
-
-            // Fallback to 'propertyModification.value'
-            return GetNestedReflectionValue(undoMod, "propertyModification.value");
+            return UndoReflectionHelper.GetCurrentValue(undoMod);
         }
+
+        #endregion
 
         /// <summary>
         /// Formats a property value for JSON storage.

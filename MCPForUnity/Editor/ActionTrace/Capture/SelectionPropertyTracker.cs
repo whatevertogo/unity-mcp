@@ -5,6 +5,7 @@ using UnityEngine;
 using Newtonsoft.Json;
 using MCPForUnity.Editor.ActionTrace.Core;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.ActionTrace.Helpers;
 
 namespace MCPForUnity.Editor.ActionTrace.Capture
 {
@@ -167,101 +168,44 @@ namespace MCPForUnity.Editor.ActionTrace.Capture
             EventStore.Record(evt);
         }
 
-        #region UndoPropertyModification Helpers
+        #region UndoPropertyModification Helpers (via UndoReflectionHelper)
 
         /// <summary>
         /// Extracts the target object from UndoPropertyModification.
-        /// Structure: UndoPropertyModification has currentValue/previousValue fields of type PropertyModification,
-        /// and PropertyModification has a 'target' field of type UnityEngine.Object.
+        /// Uses shared UndoReflectionHelper for reflection logic.
         /// </summary>
         private static UnityEngine.Object GetTargetFromUndoMod(UndoPropertyModification undoMod)
         {
-            var undoModType = undoMod.GetType();
-
-            // Get the PropertyModification from currentValue or previousValue field
-            var propModField = undoModType.GetField("currentValue");
-            if (propModField == null)
-                propModField = undoModType.GetField("previousValue");
-
-            if (propModField != null)
-            {
-                var propMod = propModField.GetValue(undoMod);
-                if (propMod != null)
-                {
-                    // PropertyModification has a 'target' field
-                    var targetField = propMod.GetType().GetField("target");
-                    if (targetField != null)
-                    {
-                        var target = targetField.GetValue(propMod) as UnityEngine.Object;
-                        Debug.Log($"[SelectionPropertyTracker] Got target: {target?.name} ({target?.GetType().Name})");
-                        return target;
-                    }
-                }
-            }
-            return null;
+            var target = UndoReflectionHelper.GetTarget(undoMod);
+            Debug.Log($"[SelectionPropertyTracker] Got target: {target?.name} ({target?.GetType().Name})");
+            return target;
         }
 
         /// <summary>
         /// Extracts the property path from UndoPropertyModification.
+        /// Uses shared UndoReflectionHelper for reflection logic.
         /// </summary>
         private static string GetPropertyPathFromUndoMod(UndoPropertyModification undoMod)
         {
-            var undoModType = undoMod.GetType();
-            var propModField = undoModType.GetField("currentValue");
-            if (propModField == null)
-                propModField = undoModType.GetField("previousValue");
-
-            if (propModField != null)
-            {
-                var propMod = propModField.GetValue(undoMod);
-                if (propMod != null)
-                {
-                    var pathField = propMod.GetType().GetField("propertyPath");
-                    if (pathField != null)
-                        return pathField.GetValue(propMod) as string;
-                }
-            }
-            return null;
+            return UndoReflectionHelper.GetPropertyPath(undoMod);
         }
 
         /// <summary>
         /// Extracts the current value from UndoPropertyModification.
+        /// Uses shared UndoReflectionHelper for reflection logic.
         /// </summary>
         private static object GetCurrentValueFromUndoMod(UndoPropertyModification undoMod)
         {
-            var undoModType = undoMod.GetType();
-            var propModField = undoModType.GetField("currentValue");
-            if (propModField != null)
-            {
-                var propMod = propModField.GetValue(undoMod);
-                if (propMod != null)
-                {
-                    var valueField = propMod.GetType().GetField("value");
-                    if (valueField != null)
-                        return valueField.GetValue(propMod);
-                }
-            }
-            return null;
+            return UndoReflectionHelper.GetCurrentValue(undoMod);
         }
 
         /// <summary>
         /// Extracts the previous value from UndoPropertyModification.
+        /// Uses shared UndoReflectionHelper for reflection logic.
         /// </summary>
         private static object GetPreviousValueFromUndoMod(UndoPropertyModification undoMod)
         {
-            var undoModType = undoMod.GetType();
-            var propModField = undoModType.GetField("previousValue");
-            if (propModField != null)
-            {
-                var propMod = propModField.GetValue(undoMod);
-                if (propMod != null)
-                {
-                    var valueField = propMod.GetType().GetField("value");
-                    if (valueField != null)
-                        return valueField.GetValue(propMod);
-                }
-            }
-            return null;
+            return UndoReflectionHelper.GetPreviousValue(undoMod);
         }
 
         #endregion

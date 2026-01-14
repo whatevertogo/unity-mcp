@@ -70,6 +70,13 @@ namespace MCPForUnity.Editor.ActionTrace.Core
         public string[] DisabledEventTypes = Array.Empty<string>();
 
         /// <summary>
+        /// Time window for transaction aggregation in milliseconds.
+        /// Events within this window are grouped into a single logical transaction.
+        /// Used by TransactionAggregator when no ToolCallId information exists.
+        /// </summary>
+        public int TransactionWindowMs = 2000;
+
+        /// <summary>
         /// Reloads settings from disk.
         /// Call this after manually modifying the settings asset.
         /// </summary>
@@ -152,6 +159,12 @@ namespace MCPForUnity.Editor.ActionTrace.Core
                 new GUIContent("Max Events", "Maximum number of events to store"));
             EditorGUILayout.PropertyField(so.FindProperty(nameof(ActionTraceSettings.HotEventCount)),
                 new GUIContent("Hot Events Count", "Keep full payload for latest N events"));
+
+            EditorGUILayout.Space();
+
+            EditorGUILayout.LabelField("Transaction Aggregation", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(so.FindProperty(nameof(ActionTraceSettings.TransactionWindowMs)),
+                new GUIContent("Transaction Window (ms)", "Time window for grouping events into logical transactions"));
 
             EditorGUILayout.Space();
 
