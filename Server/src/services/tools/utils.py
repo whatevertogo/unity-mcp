@@ -96,6 +96,15 @@ def coerce_float(value: Any, default: float | None = None) -> float | None:
         return default
 
 
+def coerce_str(value: Any, default: str | None = None) -> str | None:
+    """Attempt to coerce a loosely-typed value to a string."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip() if value.strip() else default
+    return str(value) if value is not None else default
+
+
 def normalize_properties(value: Any) -> tuple[dict[str, Any] | None, str | None]:
     """
     Robustly normalize a properties parameter to a dict.
