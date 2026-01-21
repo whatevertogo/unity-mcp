@@ -6,51 +6,20 @@ using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.ProjectSnapshot
 {
+    /// <summary>
+    /// Automatically generates project snapshot after script compilation.
+    /// Simplified - minimal state checks, direct initialization.
+    /// </summary>
     [InitializeOnLoad]
     public static class ProjectSnapshotAutoGenerator
     {
         private static bool _isInitialized = false;
         private static double _editorIdleStartTime = -1;
-        private const double IdleDelaySeconds = 3.0;
-        private static DateTime _lastGenerationTime = DateTime.MinValue;
-        private static readonly object _throttleLock = new object();
-
-        private static bool ShouldGenerate(int minIntervalSeconds)
-        {
-            lock (_throttleLock)
-            {
-                var elapsed = (DateTime.UtcNow - _lastGenerationTime).TotalSeconds;
-                return elapsed >= minIntervalSeconds;
-            }
-        }
-
-        public static void MarkGenerated()
-        {
-            lock (_throttleLock)
-            {
-                _lastGenerationTime = DateTime.UtcNow;
-            }
-        }
-
-        private static double GetElapsedSeconds()
-        {
-            lock (_throttleLock)
-            {
-                return (DateTime.UtcNow - _lastGenerationTime).TotalSeconds;
-            }
-        }
-
-        public static void ResetThrottle()
-        {
-            lock (_throttleLock)
-            {
-                _lastGenerationTime = DateTime.MinValue;
-            }
-        }
+        private const double IdleDelaySeconds = 1.0; // Reduced from 3s to 1s
 
         static ProjectSnapshotAutoGenerator()
         {
-            EditorApplication.delayCall += Initialize;
+            Initialize();
         }
 
         private static void Initialize()
@@ -58,69 +27,55 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
             if (_isInitialized) return;
             _isInitialized = true;
 
+            // Subscribe to events
             HookRegistry.OnScriptCompiled += OnScriptCompiled;
             HookRegistry.OnScriptCompilationFailed += OnScriptCompilationFailed;
-            HookRegistry.OnSceneSaved += OnSceneSaved;
             EditorApplication.update += OnEditorUpdate;
 
-            McpLog.Info("[ProjectSnapshot-Auto] Automatic generation initialized");
+            // Log settings status for debugging
+            try
+            {
+                var settings = ProjectSnapshotSettings.Instance;
+                var enabled = settings != null && settings.autoGenerateEnabled;
+                var outputPath = settings != null ? settings.outputPath : "unknown";
+                McpLog.Info($"[ProjectSnapshot-Auto] Initialized (autoGenerate={enabled}, output={outputPath})");
+            }
+            catch (Exception e)
+            {
+                McpLog.Warn($"[ProjectSnapshot-Auto] Initialized but settings check failed: {e.Message}");
+            }
         }
 
         private static void OnScriptCompiled()
         {
-            var settings = GetSettings();
-            if (settings == null || !settings.autoGenerateEnabled || !settings.autoGenerateOnCompile) return;
+            McpLog.Info("[ProjectSnapshot-Auto] OnScriptCompiled event received");
 
-            McpLog.Info("[ProjectSnapshot-Auto] Script compiled, checking if snapshot update is needed...");
-            ScheduleGeneration("compile", settings);
+            ProjectSnapshotSettings settings = null;
+            try
+            {
+                settings = ProjectSnapshotSettings.Instance;
+            }
+            catch (Exception e)
+            {
+                McpLog.Error($"[ProjectSnapshot-Auto] Failed to load settings: {e.Message}\n{e.StackTrace}");
+                return;
+            }
+
+            if (settings == null || !settings.autoGenerateEnabled)
+            {
+                McpLog.Info($"[ProjectSnapshot-Auto] Skipping (settings null or disabled)");
+                return;
+            }
+
+            // Schedule generation immediately - no throttle for script compiles
+            _editorIdleStartTime = EditorApplication.timeSinceStartup;
+            McpLog.Info($"[ProjectSnapshot-Auto] Snapshot generation scheduled -> {settings.outputPath}");
         }
 
         private static void OnScriptCompilationFailed(int errorCount)
         {
+            McpLog.Warn($"[ProjectSnapshot-Auto] Compilation failed ({errorCount} errors), cancelling generation");
             _editorIdleStartTime = -1;
-        }
-
-        private static void OnSceneSaved(UnityEngine.SceneManagement.Scene scene)
-        {
-            var settings = GetSettings();
-            if (settings == null || !settings.autoGenerateEnabled || !settings.autoGenerateOnSceneSave) return;
-
-            McpLog.Info($"[ProjectSnapshot-Auto] Scene saved: {scene.name}, checking if snapshot update is needed...");
-            ScheduleGeneration("scene_save", settings);
-        }
-
-        private static void ScheduleGeneration(string trigger, ProjectSnapshotSettings settings)
-        {
-            if (settings.autoGenerateOnlyIfDirty)
-            {
-                var options = settings.ToOptions();
-                if (!ProjectSnapshotGenerator.CheckNeedsRegeneration(options))
-                {
-                    McpLog.Info("[ProjectSnapshot-Auto] Project unchanged since last snapshot, skipping generation.");
-                    return;
-                }
-            }
-
-            if (!ShouldGenerate(settings.autoGenerateMinIntervalSeconds))
-            {
-                var elapsed = GetElapsedSeconds();
-                McpLog.Info($"[ProjectSnapshot-Auto] Throttled: {elapsed:F0}s elapsed, minimum {settings.autoGenerateMinIntervalSeconds}s required.");
-                return;
-            }
-
-            if (ProjectSnapshotGenerator.IsGenerating)
-            {
-                McpLog.Info("[ProjectSnapshot-Auto] Generation already in progress, skipping.");
-                return;
-            }
-
-            if (EditorApplication.isPlayingOrWillChangePlaymode)
-            {
-                McpLog.Info("[ProjectSnapshot-Auto] Skipping generation during play mode transition.");
-                return;
-            }
-
-            _editorIdleStartTime = EditorApplication.timeSinceStartup;
         }
 
         private static void OnEditorUpdate()
@@ -128,11 +83,11 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
             if (_editorIdleStartTime < 0) return;
 
             var idleTime = EditorApplication.timeSinceStartup - _editorIdleStartTime;
-            bool isEditorIdle = !EditorApplication.isCompiling &&
-                               !EditorApplication.isUpdating &&
-                               !EditorApplication.isPlayingOrWillChangePlaymode;
 
-            if (isEditorIdle && idleTime >= IdleDelaySeconds)
+            // Minimal check: only ensure not compiling
+            bool canGenerate = !EditorApplication.isCompiling;
+
+            if (canGenerate && idleTime >= IdleDelaySeconds)
             {
                 _editorIdleStartTime = -1;
                 ExecuteGeneration();
@@ -141,37 +96,54 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
 
         private static void ExecuteGeneration()
         {
-            var settings = GetSettings();
-            if (settings == null) return;
+            McpLog.Info("[ProjectSnapshot-Auto] ExecuteGeneration() called");
+
+            ProjectSnapshotSettings settings = null;
+            try
+            {
+                settings = ProjectSnapshotSettings.Instance;
+            }
+            catch (Exception e)
+            {
+                McpLog.Error($"[ProjectSnapshot-Auto] Failed to load settings: {e.Message}\n{e.StackTrace}");
+                return;
+            }
+
+            if (settings == null)
+            {
+                McpLog.Error("[ProjectSnapshot-Auto] Settings is null after loading");
+                return;
+            }
+
+            if (!settings.autoGenerateEnabled)
+            {
+                McpLog.Info("[ProjectSnapshot-Auto] Auto-generate is disabled in settings");
+                return;
+            }
 
             try
             {
+                McpLog.Info($"[ProjectSnapshot-Auto] Generating snapshot -> {settings.outputPath}");
+
                 var options = settings.ToOptions();
-
-                if (settings.autoGenerateSilentMode)
-                    McpLog.Info("[ProjectSnapshot-Auto] Generating snapshot in silent mode...");
-                else
-                    McpLog.Info("[ProjectSnapshot-Auto] Generating snapshot...");
-
                 var result = ProjectSnapshotGenerator.Generate(options, isAutoGenerated: true);
 
                 if (result != null && result.Success)
                 {
-                    MarkGenerated();
-                    McpLog.Info($"[ProjectSnapshot-Auto] Snapshot generated successfully in {result.GenerationTimeMs}ms. Output: {result.OutputPath}, {result.WordCount} words.");
+                    McpLog.Info($"[ProjectSnapshot-Auto] SUCCESS: {result.GenerationTimeMs}ms -> {result.OutputPath}");
                 }
                 else if (result == null)
                 {
-                    McpLog.Error("[ProjectSnapshot-Auto] Generation skipped (already in progress).");
+                    McpLog.Warn("[ProjectSnapshot-Auto] SKIPPED: Already generating");
                 }
                 else
                 {
-                    McpLog.Error($"[ProjectSnapshot-Auto] Generation failed: {result.ErrorMessage}");
+                    McpLog.Error($"[ProjectSnapshot-Auto] FAILED: {result.ErrorMessage}");
                 }
             }
             catch (Exception e)
             {
-                McpLog.Error($"[ProjectSnapshot-Auto] Error during generation: {e.Message}\n{e.StackTrace}");
+                McpLog.Error($"[ProjectSnapshot-Auto] ERROR: {e.Message}\n{e.StackTrace}");
             }
         }
 
@@ -183,35 +155,58 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
             }
             catch (Exception e)
             {
-                McpLog.Warn($"[ProjectSnapshot-Auto] Could not load settings: {e.Message}");
+                McpLog.Error($"[ProjectSnapshot-Auto] Failed to load settings: {e.Message}");
                 return null;
             }
         }
 
+        /// <summary>
+        /// Force generate snapshot (for MCP tools or manual trigger).
+        /// </summary>
         public static SnapshotResult ForceGenerate()
         {
             var settings = GetSettings();
             if (settings == null)
             {
-                McpLog.Error("[ProjectSnapshot-Auto] Settings not available for forced generation.");
                 return new SnapshotResult { Success = false, ErrorMessage = "Settings not available" };
             }
 
-            ResetThrottle();
             return ProjectSnapshotGenerator.Generate(settings.ToOptions(), isAutoGenerated: false);
         }
 
-        public static void Shutdown()
+        #region Menu Items for Debugging
+
+        [MenuItem("MCP/ProjectSnapshot/Generate Now")]
+        private static void MenuItemGenerateNow()
         {
-            if (!_isInitialized) return;
+            Debug.Log("[ProjectSnapshot] Manual generation triggered via menu...");
+            var result = ForceGenerate();
 
-            HookRegistry.OnScriptCompiled -= OnScriptCompiled;
-            HookRegistry.OnScriptCompilationFailed -= OnScriptCompilationFailed;
-            HookRegistry.OnSceneSaved -= OnSceneSaved;
-            EditorApplication.update -= OnEditorUpdate;
-
-            _isInitialized = false;
-            McpLog.Info("[ProjectSnapshot-Auto] Automatic generation shut down");
+            if (result != null && result.Success)
+            {
+                Debug.Log($"[ProjectSnapshot] SUCCESS: {result.OutputPath}");
+            }
+            else
+            {
+                Debug.LogError($"[ProjectSnapshot] FAILED: {result?.ErrorMessage ?? "Unknown error"}");
+            }
         }
+
+        [MenuItem("MCP/ProjectSnapshot/Open Settings")]
+        private static void MenuItemOpenSettings()
+        {
+            var settings = ProjectSnapshotSettings.Instance;
+            if (settings != null)
+            {
+                Selection.activeObject = settings;
+                EditorUtility.FocusProjectWindow();
+            }
+            else
+            {
+                Debug.LogError("[ProjectSnapshot] Settings not found!");
+            }
+        }
+
+        #endregion
     }
 }

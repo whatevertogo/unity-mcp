@@ -8,6 +8,133 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
     /// </summary>
 
     /// <summary>
+    /// Structured snapshot data with tiered sections for efficient AI access.
+    /// Each section is independent to allow selective loading.
+    /// </summary>
+    [Serializable]
+    public class ProjectSnapshotData
+    {
+        /// <summary>
+        /// Metadata about the snapshot generation.
+        /// </summary>
+        public SnapshotMetadata Metadata { get; set; }
+
+        /// <summary>
+        /// Basic overview: Unity version, render pipeline, project type, scale.
+        /// Purpose: "What is this project?" (30 second read)
+        /// </summary>
+        public string OverviewSection { get; set; }
+
+        /// <summary>
+        /// Structure information: Entry points, system categories, core directory structure.
+        /// Purpose: "Where do I find code?" (2 minute read)
+        /// Does NOT include OverviewSection content - they are concatenated at read time.
+        /// </summary>
+        public string StructureSection { get; set; }
+
+        /// <summary>
+        /// Deep dive information: Full file tree, data schema, detailed dependencies.
+        /// Purpose: "Deep context before code generation" (on-demand)
+        /// Does NOT include OverviewSection or StructureSection content.
+        /// </summary>
+        public string DeepDiveSection { get; set; }
+
+        /// <summary>
+        /// Gets the full content by concatenating all sections.
+        /// </summary>
+        public string GetFullContent()
+        {
+            var sb = new System.Text.StringBuilder();
+            if (!string.IsNullOrEmpty(OverviewSection)) sb.Append(OverviewSection).Append("\n\n");
+            if (!string.IsNullOrEmpty(StructureSection)) sb.Append(StructureSection).Append("\n\n");
+            if (!string.IsNullOrEmpty(DeepDiveSection)) sb.Append(DeepDiveSection);
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Gets content based on detail level.
+        /// </summary>
+        public string GetContent(DetailLevel level)
+        {
+            return level switch
+            {
+                DetailLevel.Basic => OverviewSection,
+                DetailLevel.Structure => OverviewSection + "\n\n" + StructureSection,
+                DetailLevel.Verbose => GetFullContent(),
+                _ => GetFullContent()
+            };
+        }
+    }
+
+    /// <summary>
+    /// Detail level for snapshot content retrieval.
+    /// </summary>
+    public enum DetailLevel
+    {
+        /// <summary>
+        /// Basic overview only (Unity version, render pipeline, project type, scale).
+        /// </summary>
+        Basic,
+
+        /// <summary>
+        /// Structure info (Entry points, system categories, core directory structure).
+        /// </summary>
+        Structure,
+
+        /// <summary>
+        /// Full content including deep dive (file tree, data schema, dependencies).
+        /// </summary>
+        Verbose
+    }
+
+    /// <summary>
+    /// Metadata about the snapshot generation.
+    /// </summary>
+    [Serializable]
+    public class SnapshotMetadata
+    {
+        /// <summary>
+        /// When the snapshot was generated (ISO 8601 format).
+        /// </summary>
+        public string GeneratedAt { get; set; }
+
+        /// <summary>
+        /// Unity editor version.
+        /// </summary>
+        public string UnityVersion { get; set; }
+
+        /// <summary>
+        /// Render pipeline type (URP, HDRP, Built-in).
+        /// </summary>
+        public string RenderPipeline { get; set; }
+
+        /// <summary>
+        /// Project name.
+        /// </summary>
+        public string ProjectName { get; set; }
+
+        /// <summary>
+        /// Age of the snapshot in minutes.
+        /// </summary>
+        public double AgeMinutes { get; set; }
+
+        /// <summary>
+        /// Whether Unity is currently compiling.
+        /// </summary>
+        public bool IsCompiling { get; set; }
+
+        /// <summary>
+        /// Number of scripts in the project.
+        /// </summary>
+        public int ScriptCount { get; set; }
+
+        /// <summary>
+        /// Number of scenes in the project.
+        /// </summary>
+        public int SceneCount { get; set; }
+    }
+
+    /// <summary>
     /// Configurable patterns for detecting project elements.
     /// All patterns are user-defined; no defaults are applied.
     /// </summary>
@@ -656,4 +783,199 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
         /// </summary>
         Slim
     }
+
+    #region AI-Optimized Data Models (Golden Template)
+
+    /// <summary>
+    /// Impact level for risk assessment.
+    /// Helps AI understand refactoring consequences.
+    /// </summary>
+    public enum ImpactLevel
+    {
+        /// <summary>
+        /// 🔴 Critical: > 20 refs or Top 3%. Core hub - modify via config, not code.
+        /// </summary>
+        Critical,
+
+        /// <summary>
+        /// 🟠 High: 10-20 refs or Top 10%. High-frequency component - cascading changes likely.
+        /// </summary>
+        High,
+
+        /// <summary>
+        /// 🟡 Medium: 3-9 refs. Functional module - local scope impact.
+        /// </summary>
+        Medium,
+
+        /// <summary>
+        /// 🟢 Low: 1-2 refs. Leaf node - safe to refactor or move.
+        /// </summary>
+        Low
+    }
+
+    /// <summary>
+    /// Project identity detected from code analysis.
+    /// Helps AI quickly understand project type.
+    /// </summary>
+    public class ProjectIdentity
+    {
+        /// <summary>
+        /// Detected project type: "Editor Tool" / "Mobile Game" / "VR Experience" / "Desktop Application"
+        /// </summary>
+        public string Type { get; set; }
+
+        /// <summary>
+        /// Core loop/logic description (e.g., "Data-driven combat system using ScriptableObjects")
+        /// </summary>
+        public string CoreLoop { get; set; }
+
+        /// <summary>
+        /// Project scale: "Small (< 20 scripts)" / "Medium (20-100 scripts)" / "Large (> 100 scripts)"
+        /// </summary>
+        public string Scale { get; set; }
+
+        /// <summary>
+        /// Detection method used: "Namespace Analysis" / "Dependency Scan" / "Directory Structure"
+        /// </summary>
+        public string DetectionMethod { get; set; }
+
+        /// <summary>
+        /// Confidence score (0-100).
+        /// </summary>
+        public int Confidence { get; set; }
+
+        /// <summary>
+        /// Ground-truth description from README.md (if available).
+        /// Overrides AI inference when present.
+        /// </summary>
+        public string Description { get; set; }
+    }
+
+    /// <summary>
+    /// System anatomy entry showing a category and its responsibility.
+    /// Part of the "System Anatomy" table in the snapshot.
+    /// </summary>
+    public class SystemAnatomy
+    {
+        /// <summary>
+        /// Category name: "Managers" / "Data Flow" / "Logic" / "UI" / "Audio"
+        /// </summary>
+        public string Category { get; set; }
+
+        /// <summary>
+        /// Key classes or entry points in this system.
+        /// </summary>
+        public string[] EntryPoints { get; set; } = System.Array.Empty<string>();
+
+        /// <summary>
+        /// Human-readable responsibility description.
+        /// </summary>
+        public string Responsibility { get; set; }
+
+        /// <summary>
+        /// Number of classes in this system.
+        /// </summary>
+        public int ClassCount { get; set; }
+
+        /// <summary>
+        /// Estimated token cost if AI needs to understand this system.
+        /// </summary>
+        public int TokenEstimate { get; set; }
+
+        /// <summary>
+        /// Primary namespace for this system.
+        /// </summary>
+        public string Namespace { get; set; }
+    }
+
+    /// <summary>
+    /// Mental map showing where things are located in the project.
+    /// Helps AI navigate without scanning every file.
+    /// </summary>
+    public class MentalMap
+    {
+        /// <summary>
+        /// Namespace distribution (e.g., "Project.Core: 60%, Project.Editor: 20%")
+        /// </summary>
+        public NamespaceDistribution[] Namespaces { get; set; } = System.Array.Empty<NamespaceDistribution>();
+
+        /// <summary>
+        /// Folder heatmap showing activity levels.
+        /// </summary>
+        public FolderHeatmapEntry[] Hotspots { get; set; } = System.Array.Empty<FolderHeatmapEntry>();
+
+        /// <summary>
+        /// Recommended location for new code based on project structure.
+        /// </summary>
+        public string RecommendedLocation { get; set; }
+    }
+
+    /// <summary>
+    /// Namespace distribution info.
+    /// </summary>
+    public class NamespaceDistribution
+    {
+        public string Namespace { get; set; }
+        public int ClassCount { get; set; }
+        public int Percentage { get; set; }
+        public string Purpose { get; set; }  // Inferred from naming
+    }
+
+    /// <summary>
+    /// Folder heatmap entry for showing where the "action" is.
+    /// </summary>
+    public class FolderHeatmapEntry
+    {
+        public string Path { get; set; }
+        public int FileCount { get; set; }
+        public ActivityLevel Activity { get; set; }
+        public int HighImpactCount { get; set; }  // Number of High/Critical impact assets
+    }
+
+    /// <summary>
+    /// Activity level for folder heatmap.
+    /// </summary>
+    public enum ActivityLevel
+    {
+        High,
+        Medium,
+        Low,
+        Dormant
+    }
+
+    /// <summary>
+    /// Enhanced hot asset with impact level and risk context.
+    /// </summary>
+    public class HotAssetInfo
+    {
+        public string Path { get; set; }
+        public string Type { get; set; }
+        public int ReferenceCount { get; set; }
+        public ImpactLevel Impact { get; set; }
+        public string[] RiskContext { get; set; } = System.Array.Empty<string>();
+        public float WeightedScore { get; set; }
+    }
+
+    /// <summary>
+    /// Circular dependency chain detected in the project.
+    /// </summary>
+    public class CircularDependencyChain
+    {
+        /// <summary>
+        /// Paths in the circular dependency chain.
+        /// </summary>
+        public string[] Path { get; set; } = System.Array.Empty<string>();
+
+        /// <summary>
+        /// Severity assessment: "Critical" / "Warning" / "Info"
+        /// </summary>
+        public string Severity { get; set; }
+
+        /// <summary>
+        /// Recommended action to resolve the cycle.
+        /// </summary>
+        public string Recommendation { get; set; }
+    }
+
+    #endregion
 }

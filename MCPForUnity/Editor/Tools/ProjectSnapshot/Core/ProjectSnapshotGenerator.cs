@@ -98,6 +98,12 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
                     indexGenerated = true;
                 }
 
+                // Generate structured snapshot for efficient AI access
+                if (!fromCache)
+                {
+                    GenerateStructuredSnapshot(options, forceRegenerate: true);
+                }
+
                 // Update cache metadata
                 var metadata = SnapshotCache.CreateMetadata(options);
                 if (dependenciesGenerated)
@@ -142,9 +148,6 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
                 {
                     _isGenerating = false;
                 }
-
-                // Mark throttle only on successful completion
-                ProjectSnapshotAutoGenerator.MarkGenerated();
             }
 
         }
@@ -211,6 +214,368 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
 
             return result;
         }
+
+        #region Structured Snapshot Support
+
+        private static readonly string StructuredSnapshotPath = "Library/ProjectSnapshot/.structured.json";
+
+        /// <summary>
+        /// Generates a structured snapshot with tiered sections for efficient AI access.
+        /// Uses the "Golden Template" format with AI-optimized rendering.
+        /// </summary>
+        public static ProjectSnapshotData GenerateStructuredSnapshot(SnapshotOptions options, bool forceRegenerate = false)
+        {
+            // Check cache first
+            if (!forceRegenerate)
+            {
+                var cached = LoadStructuredSnapshot();
+                if (cached != null)
+                {
+                    return cached;
+                }
+            }
+
+            // Generate semantic data using new analyzers
+            var metadata = GenerateMetadata(options);
+            var identity = ProjectIdentityAnalyzer.Analyze();
+            var systems = SystemAnatomyGenerator.Generate();
+            var mentalMap = MentalMapGenerator.Generate();
+
+            // Render content using new renderer
+            var overviewContent = SnapshotRenderer.RenderSnapshot(metadata, identity, systems, mentalMap);
+            var structureContent = GenerateStructureSection(options); // Keep legacy for now
+            var deepDiveContent = GenerateDeepDiveSection(options);     // Keep legacy for now
+
+            var data = new ProjectSnapshotData
+            {
+                Metadata = metadata,
+                OverviewSection = overviewContent,
+                StructureSection = structureContent,
+                DeepDiveSection = deepDiveContent
+            };
+
+            // Save to cache
+            SaveStructuredSnapshot(data);
+
+            return data;
+        }
+
+        /// <summary>
+        /// Generates the metadata for the snapshot.
+        /// </summary>
+        private static SnapshotMetadata GenerateMetadata(SnapshotOptions options)
+        {
+            var stats = ArchitectureAnalyzer.GetProjectStatistics();
+            var renderPipeline = DetectRenderPipeline();
+
+            return new SnapshotMetadata
+            {
+                GeneratedAt = DateTime.UtcNow.ToString("o"),
+                UnityVersion = Application.unityVersion,
+                RenderPipeline = renderPipeline,
+                ProjectName = PlayerSettings.productName,
+                AgeMinutes = 0,
+                IsCompiling = EditorApplication.isCompiling,
+                ScriptCount = Convert.ToInt32(stats.GetValueOrDefault("total_scripts", 0)),
+                SceneCount = Convert.ToInt32(stats.GetValueOrDefault("scenes", 0))
+            };
+        }
+
+        /// <summary>
+        /// Detects the render pipeline type.
+        /// </summary>
+        private static string DetectRenderPipeline()
+        {
+#if URP_PRESENT
+            return "URP";
+#elif HDRP_PRESENT
+            return "HDRP";
+#else
+            return "Built-in";
+#endif
+        }
+
+        /// <summary>
+        /// Generates the overview section (basic level).
+        /// Purpose: "What is this project?"
+        /// </summary>
+        private static string GenerateOverviewSection(SnapshotOptions options)
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("## Project Overview");
+            sb.AppendLine();
+
+            var stats = ArchitectureAnalyzer.GetProjectStatistics();
+            var renderPipeline = DetectRenderPipeline();
+
+            sb.AppendLine($"**Unity Version**: {Application.unityVersion}");
+            sb.AppendLine($"**Render Pipeline**: {renderPipeline}");
+            sb.AppendLine($"**Project Name**: {PlayerSettings.productName}");
+            sb.AppendLine();
+
+            int scriptCount = Convert.ToInt32(stats.GetValueOrDefault("total_scripts", 0));
+            int sceneCount = Convert.ToInt32(stats.GetValueOrDefault("scenes", 0));
+            string scale = scriptCount < 20 ? "Small" : scriptCount < 100 ? "Medium" : "Large";
+
+            sb.AppendLine($"**Project Scale**: {scale} ({scriptCount} scripts, {sceneCount} scenes)");
+            sb.AppendLine();
+
+            // Detect project type from naming patterns
+            var projectType = InferProjectType(stats);
+            if (!string.IsNullOrEmpty(projectType))
+            {
+                sb.AppendLine($"**Detected Project Type**: {projectType}");
+                sb.AppendLine();
+            }
+
+            // Key packages
+            var keyPackages = DetectKeyPackages();
+            if (keyPackages.Count > 0)
+            {
+                sb.AppendLine("**Key Packages**:");
+                foreach (var pkg in keyPackages)
+                {
+                    sb.AppendLine($"- {pkg}");
+                }
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Infers project type from naming patterns and assets.
+        /// </summary>
+        private static string InferProjectType(Dictionary<string, object> stats)
+        {
+            var indicators = new List<(string pattern, string type)>
+            {
+                ("2D", "2D Game"),
+                ("3D", "3D Game"),
+                ("UI", "UI/Application"),
+                ("Network", "Networked/Multiplayer"),
+                ("VR", "VR/XR Application"),
+                ("AR", "AR Application")
+            };
+
+            // Check scene names and script counts
+            int scriptCount = Convert.ToInt32(stats.GetValueOrDefault("total_scripts", 0));
+
+            // Simple heuristic - can be enhanced
+            if (scriptCount > 50) return "Medium-Large Game Project";
+            if (scriptCount > 20) return "Small-Medium Game Project";
+            return "Small Project";
+        }
+
+        /// <summary>
+        /// Detects key Unity packages in use.
+        /// </summary>
+        private static List<string> DetectKeyPackages()
+        {
+            var packages = new List<string>();
+
+            // Check for common packages via type existence
+            if (TypeExists("UnityEngine.Cinemachine.CinemachineVirtualCamera"))
+                packages.Add("Cinemachine");
+            if (TypeExists("UnityEngine.InputSystem.InputAction"))
+                packages.Add("Input System");
+            if (TypeExists("NavMeshPlus.Components.NavMeshSurface"))
+                packages.Add("NavMeshPlus");
+            if (TypeExists("Unity.AI.Navigation.NavMesh"))
+                packages.Add("AI Navigation");
+
+            return packages;
+        }
+
+        private static bool TypeExists(string typeName)
+        {
+            return Type.GetType(typeName) != null ||
+                   System.AppDomain.CurrentDomain.GetAssemblies()
+                       .SelectMany(a => a.GetTypes())
+                       .Any(t => t.FullName == typeName || t.Name == typeName.Split('.').Last());
+        }
+
+        /// <summary>
+        /// Generates the structure section (structure level).
+        /// Purpose: "Where do I find code?"
+        /// </summary>
+        private static string GenerateStructureSection(SnapshotOptions options)
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("## Entry Points");
+            sb.AppendLine();
+
+            var entryPoints = ArchitectureAnalyzer.FindEntryPoints(options);
+            if (entryPoints.Count > 0)
+            {
+                foreach (var entry in entryPoints.Take(10))
+                {
+                    var fileName = Path.GetFileNameWithoutExtension(entry.Path);
+                    sb.AppendLine($"- **{fileName}** - {entry.Reason}");
+                    sb.AppendLine($"  Path: `{entry.Path}`");
+                }
+                if (entryPoints.Count > 10)
+                {
+                    sb.AppendLine($"  ... and {entryPoints.Count - 10} more");
+                }
+            }
+            else
+            {
+                sb.AppendLine("_No obvious entry point detected_");
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("## System Categories");
+            sb.AppendLine();
+
+            var codeStructure = CodeStructureAnalyzer.AnalyzeCodeStructure(options);
+            var categories = codeStructure.GetValueOrDefault("components_by_category") as IDictionary<string, object>;
+
+            if (categories != null)
+            {
+                foreach (var kvp in categories.OrderByDescending(k => ((IEnumerable<object>)k.Value).Count()))
+                {
+                    var items = (IEnumerable<object>)kvp.Value;
+                    sb.AppendLine($"### {kvp.Key} ({items.Count()} types)");
+                    foreach (var item in items.Take(5))
+                    {
+                        var name = item.GetType().GetProperty("name")?.GetValue(item) as string;
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            sb.AppendLine($"- `{name}`");
+                        }
+                    }
+                    if (items.Count() > 5)
+                    {
+                        sb.AppendLine($"  ... and {items.Count() - 5} more");
+                    }
+                    sb.AppendLine();
+                }
+            }
+
+            sb.AppendLine("## Core Directory Structure");
+            sb.AppendLine();
+
+            // Generate simplified directory map (top 2 levels only)
+            GenerateSimplifiedDirectoryMap(sb, options, maxDepth: 2);
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Generates a simplified directory map with limited depth.
+        /// </summary>
+        private static void GenerateSimplifiedDirectoryMap(StringBuilder sb, SnapshotOptions options, int maxDepth)
+        {
+            var originalMaxDepth = options.MaxDepth;
+            options.MaxDepth = maxDepth;
+
+            DirectoryAnalyzer.GenerateDirectoryMap(sb, options);
+
+            options.MaxDepth = originalMaxDepth;
+        }
+
+        /// <summary>
+        /// Generates the deep dive section (verbose level).
+        /// Purpose: "Deep context before code generation"
+        /// </summary>
+        private static string GenerateDeepDiveSection(SnapshotOptions options)
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("## Complete Directory Structure");
+            sb.AppendLine();
+            DirectoryAnalyzer.GenerateDirectoryMap(sb, options);
+            sb.AppendLine();
+
+            if (options.IncludeDependencies)
+            {
+                sb.AppendLine("## Asset Dependencies");
+                sb.AppendLine();
+                AssetRegistryAnalyzer.GenerateAssetRegistry(sb, options);
+                sb.AppendLine();
+            }
+
+            if (options.IncludeDataSchemas)
+            {
+                sb.AppendLine("## Data Schema");
+                sb.AppendLine();
+                GenerateLightweightDataSchema(sb, options);
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Loads the structured snapshot from disk.
+        /// Returns null if not found or invalid.
+        /// </summary>
+        public static ProjectSnapshotData LoadStructuredSnapshot()
+        {
+            var fullPath = Path.Combine(Application.dataPath, StructuredSnapshotPath);
+            if (!File.Exists(fullPath)) return null;
+
+            try
+            {
+                var json = File.ReadAllText(fullPath);
+                var data = Newtonsoft.Json.JsonConvert.DeserializeObject<ProjectSnapshotData>(json);
+
+                // Update age
+                if (data?.Metadata != null)
+                {
+                    var generatedTime = DateTime.Parse(data.Metadata.GeneratedAt);
+                    data.Metadata.AgeMinutes = (DateTime.UtcNow - generatedTime).TotalMinutes;
+                }
+
+                return data;
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"[ProjectSnapshot] Error loading structured snapshot: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Saves the structured snapshot to disk.
+        /// </summary>
+        private static void SaveStructuredSnapshot(ProjectSnapshotData data)
+        {
+            var fullPath = Path.Combine(Application.dataPath, StructuredSnapshotPath);
+            var directory = Path.GetDirectoryName(fullPath);
+
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            try
+            {
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(data, Newtonsoft.Json.Formatting.Indented);
+                File.WriteAllText(fullPath, json, System.Text.Encoding.UTF8);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"[ProjectSnapshot] Error saving structured snapshot: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Forces a synchronous regeneration of the snapshot.
+        /// Blocks until complete. Use sparingly.
+        /// </summary>
+        public static SnapshotResult GenerateNow(SnapshotOptions options = null)
+        {
+            options = options ?? ProjectSnapshotSettings.Instance?.ToOptions() ?? new SnapshotOptions();
+            options.ForceRegenerate = true;
+            options.UseCache = false;
+
+            return Generate(options, isAutoGenerated: false);
+        }
+
+        #endregion
 
         #region Content Generation Methods (moved from ProjectSnapshotTool)
 
@@ -530,7 +895,7 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
                         {
                             sb.AppendLine($"**Dependencies**: {prefab.Dependencies.Count} assets");
                             sb.AppendLine();
-                            sb.AppendLine("*Use `search_asset_dependency` for detailed dependency list.*");
+                            sb.AppendLine("*Use `inspect_dependency` with focus_path for detailed analysis.*");
                             tokenEstimate += 15;
                         }
                     }
@@ -577,7 +942,7 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
                     }
                 }
                 sb.AppendLine();
-                sb.AppendLine("*Use `get_data_schema` tool for detailed code snippets.*");
+                sb.AppendLine("*Read the ScriptableObject source file for detailed code.*");
                 sb.AppendLine();
             }
 
@@ -616,7 +981,7 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
                     sb.AppendLine($"- `{fileName}` ({size} chars) - `{json.Path}`");
                 }
                 sb.AppendLine();
-                sb.AppendLine("*Use `get_data_schema` tool for detailed content.*");
+                sb.AppendLine("*Read the JSON file directly for detailed content.*");
                 sb.AppendLine();
             }
         }
@@ -635,14 +1000,11 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
             sb.AppendLine("> **Quick dependency search tools**:");
             sb.AppendLine(">");
             sb.AppendLine("```");
-            sb.AppendLine("// Search asset dependencies");
-            sb.AppendLine("await mcp.call_tool(\"search_asset_dependency\", {\"asset_path\": \"Assets/Prefabs/Example.prefab\"})");
+            sb.AppendLine("// Inspect specific asset dependencies");
+            sb.AppendLine("await mcp.call_tool(\"inspect_dependency\", {\"focus_path\": \"Assets/Prefabs/Example.prefab\"})");
             sb.AppendLine("");
-            sb.AppendLine("// Search assets by name");
-            sb.AppendLine("await mcp.call_tool(\"search_assets_by_name\", {\"name_pattern\": \"Player\"})");
-            sb.AppendLine("");
-            sb.AppendLine("// Get assets by type");
-            sb.AppendLine("await mcp.call_tool(\"get_assets_by_type\", {\"asset_type\": \"Material\"})");
+            sb.AppendLine("// Get global hot assets and circular dependencies");
+            sb.AppendLine("await mcp.call_tool(\"inspect_dependency\", {})");
             sb.AppendLine("```");
             sb.AppendLine();
         }
@@ -655,14 +1017,12 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
             sb.AppendLine();
             sb.AppendLine("| Tool | Purpose |");
             sb.AppendLine("|------|---------|");
-            sb.AppendLine("| `search_asset_dependency` | Find what an asset depends on |");
-            sb.AppendLine("| `search_assets_by_name` | Search assets by name pattern |");
-            sb.AppendLine("| `get_assets_by_type` | Get all assets of a type |");
-            sb.AppendLine("| `get_project_architecture` | Get architecture details |");
-            sb.AppendLine("| `get_project_directory` | Explore directory structure |");
-            sb.AppendLine("| `get_data_schema` | Get ScriptableObject/JSON schemas |");
-            sb.AppendLine("| `check_project_dirty` | Check if snapshot needs update |");
-            sb.AppendLine("| `regenerate_dependency_index` | Rebuild the dependency index |");
+            sb.AppendLine("| `get_project_snapshot` | Get project overview with tiered detail levels |");
+            sb.AppendLine("| `inspect_dependency` | Inspect asset dependencies & circular dependencies |");
+            sb.AppendLine("| `regenerate_project_snapshot` | Force regenerate the snapshot |");
+            sb.AppendLine("| `get_action_trace` | Query Unity editor action history |");
+            sb.AppendLine("| `find_gameobjects` | Find GameObjects by criteria |");
+            sb.AppendLine("| `manage_components` | Add/remove/query components on GameObjects |");
             sb.AppendLine();
         }
 
@@ -673,20 +1033,18 @@ namespace MCPForUnity.Editor.Tools.ProjectSnapshot
             sb.AppendLine("## AI Query Protocol");
             sb.AppendLine();
             sb.AppendLine("**Layer Selection**:");
-            sb.AppendLine("- Context (this file) → Already loaded. Use for overview.");
-            sb.AppendLine("- Index → `search_asset_dependency` / `search_assets_by_name` for GUID lookup.");
-            sb.AppendLine("- Detail → `get_data_schema` / `get_project_architecture` for deep analysis.");
+            sb.AppendLine("- Overview → Use `get_project_snapshot` with detail_level='basic' for quick context.");
+            sb.AppendLine("- Structure → Use detail_level='structure' for entry points and system anatomy.");
+            sb.AppendLine("- Dependencies → Use `inspect_dependency` for hot assets and circular dependency warnings.");
             sb.AppendLine();
             sb.AppendLine("**When to Read Files**:");
-            sb.AppendLine("- ✅ Entry points: Read files from SECTION 1 directly.");
-            sb.AppendLine("- ✅ Managers: Read files from SECTION 1 directly.");
-            sb.AppendLine("- ❌ Dependencies: Use tools, don't scan dependencies manually.");
-            sb.AppendLine("- ❌ Directory listings: Use `get_project_directory` tool.");
+            sb.AppendLine("- ✅ Entry points: Read files directly after identifying from snapshot.");
+            sb.AppendLine("- ✅ Managers/Core systems: Read files directly for understanding business logic.");
+            sb.AppendLine("- ❌ Dependencies: Use `inspect_dependency` tool instead of manual scanning.");
             sb.AppendLine();
             sb.AppendLine("**Token Optimization**:");
-            sb.AppendLine("- Load dependencies file only for asset migration/auditing.");
-            sb.AppendLine("- Use `check_project_dirty` before regenerating snapshot.");
-            sb.AppendLine("- Use page_size for large queries (hierarchy/components/dependencies).");
+            sb.AppendLine("- Use tiered detail levels to load only what you need.");
+            sb.AppendLine("- For refactoring: Always check `inspect_dependency` for impact analysis first.");
             sb.AppendLine();
         }
 
