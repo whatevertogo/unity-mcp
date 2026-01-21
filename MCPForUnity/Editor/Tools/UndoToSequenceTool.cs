@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.ActionTrace.Core;
+using MCPForUnity.Editor.ActionTrace.Core.Settings;
+using MCPForUnity.Editor.ActionTrace.Core.Store;
 using UnityEditor;
 
 namespace MCPForUnity.Editor.Tools
@@ -83,11 +84,26 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"Target sequence ({targetSequence}) is not in the past. Current sequence: {currentSequence}");
                 }
 
-                // Query events to find which ones occurred after target sequence
-                var eventsAfterTarget = EventStore.Query(
-                    limit: int.MaxValue,  // Get all events
-                    sinceSequence: targetSequence
-                ).ToList();
+                // Query all events to validate target range and compute steps
+                // Using QueryAll() instead of Query() to ensure we have complete history for validation
+                var allEvents = EventStore.QueryAll().ToList();
+                if (allEvents.Count == 0)
+                {
+                    return new ErrorResponse("No events recorded yet.");
+                }
+
+                // Check if target sequence is older than the oldest stored event
+                // QueryAll returns events in descending sequence order (newest first), so last element is oldest
+                var oldestSequence = allEvents[allEvents.Count - 1].Sequence;
+                if (targetSequence < oldestSequence)
+                {
+                    return new ErrorResponse(
+                        $"Target sequence ({targetSequence}) is older than the earliest stored event ({oldestSequence}). " +
+                        $"Event history has been trimmed due to max events limit ({ActionTraceSettings.Instance?.Storage.MaxEvents ?? 800}).");
+                }
+
+                // Filter events after target sequence
+                var eventsAfterTarget = allEvents.Where(e => e.Sequence > targetSequence).ToList();
 
                 if (eventsAfterTarget.Count == 0)
                 {
@@ -135,10 +151,14 @@ namespace MCPForUnity.Editor.Tools
                     Undo.PerformUndo();
                 }
 
-                // Force GUI refresh to update the scene
+                // Force GUI refresh to update the scene (with validity check)
                 EditorApplication.delayCall += () =>
                 {
-                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
+                    var scene = UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene();
+                    if (scene.IsValid() && scene.isLoaded)
+                    {
+                        UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
+                    }
                 };
 
                 return new SuccessResponse($"Successfully reverted {stepsToUndo} Undo steps to reach sequence {targetSequence}", new
