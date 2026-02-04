@@ -10,6 +10,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from core.tool_filter_decorator import prerequisite_check
 from services.tools.utils import parse_json_payload, coerce_int, normalize_properties
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -27,6 +28,7 @@ from services.tools.preflight import preflight
         destructiveHint=True,
     ),
 )
+@prerequisite_check(require_no_compile=True)
 async def manage_asset(
     ctx: Context,
     action: Annotated[Literal["import", "create", "modify", "delete", "duplicate", "move", "rename", "search", "get_info", "create_folder", "get_components"], "Perform CRUD operations on assets."],

@@ -6,6 +6,7 @@ from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_int, coerce_bool
+from core.tool_filter_decorator import prerequisite_check
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
@@ -18,6 +19,7 @@ from services.tools.preflight import preflight
         destructiveHint=True,
     ),
 )
+@prerequisite_check(require_no_compile=True)
 async def manage_scene(
     ctx: Context,
     action: Annotated[Literal[

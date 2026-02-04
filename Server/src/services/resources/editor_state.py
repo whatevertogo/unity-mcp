@@ -35,10 +35,18 @@ class EditorStateActiveScene(BaseModel):
     name: str | None = None
 
 
+class EditorStateSelection(BaseModel):
+    has_selection: bool | None = None
+    active_instance_id: int | None = None
+    active_game_object_name: str | None = None
+    selection_count: int | None = None
+
+
 class EditorStateEditor(BaseModel):
     is_focused: bool | None = None
     play_mode: EditorStatePlayMode | None = None
     active_scene: EditorStateActiveScene | None = None
+    selection: EditorStateSelection | None = None
 
 
 class EditorStateActivity(BaseModel):

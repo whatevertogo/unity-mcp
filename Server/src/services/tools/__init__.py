@@ -8,6 +8,7 @@ from typing import TypeVar
 from fastmcp import Context, FastMCP
 from core.telemetry_decorator import telemetry_tool
 from core.logging_decorator import log_execution
+from core.tool_filter_decorator import prerequisite_check, tool_prerequisites
 from utils.module_discovery import discover_modules
 from services.registry import get_registered_tools
 
