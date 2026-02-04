@@ -163,30 +163,30 @@ def prerequisite_check(
                         state_resp = loop.run_until_complete(get_editor_state(ctx))
                         state_data = state_resp.data if hasattr(state_resp, "data") else None
                         if isinstance(state_data, dict):
-                            prereq = ToolPrerequisite(
-                                require_no_compile=require_no_compile,
-                                require_selection=require_selection,
-                                require_paused_for_destructive=require_paused_for_destructive,
-                                require_no_tests=require_no_tests,
-                            )
-                            is_met, blocking_reason = prereq.is_met(state_data)
-                            if not is_met:
-                                advice = state_data.get("advice", {})
-                                blocking_reasons = advice.get("blocking_reasons", []) if isinstance(advice, dict) else []
-                                from models import MCPResponse
-                                return MCPResponse(
-                                    success=False,
-                                    error="prerequisite_failed",
-                                    message=f"Tool '{tool_name}' is not available: {blocking_reason}",
-                                    data={
-                                        "tool": tool_name,
-                                        "blocking_reason": blocking_reason,
-                                        "current_state": {
-                                            "ready_for_tools": advice.get("ready_for_tools"),
-                                            "blocking_reasons": blocking_reasons,
-                                        } if isinstance(state_data.get("advice"), dict) else None
-                                    }
-                                )
+                            # Reuse the already-registered ToolPrerequisite instance
+                            prereq = tool_prerequisites.get(tool_name)
+                            if prereq is not None:
+                                is_met, blocking_reason = prereq.is_met(state_data)
+                                if not is_met:
+                                    advice = state_data.get("advice", {})
+                                    blocking_reasons = advice.get("blocking_reasons", []) if isinstance(advice, dict) else []
+                                    from models import MCPResponse
+                                    return MCPResponse(
+                                        success=False,
+                                        error="prerequisite_failed",
+                                        message=f"Tool '{tool_name}' is not available: {blocking_reason}",
+                                        data={
+                                            "tool": tool_name,
+                                            "blocking_reason": blocking_reason,
+                                            "current_state": {
+                                                "ready_for_tools": advice.get("ready_for_tools"),
+                                                "blocking_reasons": blocking_reasons,
+                                            } if isinstance(state_data.get("advice"), dict) else None
+                                        }
+                                    )
+                except RuntimeError as e:
+                    # Event loop is already running in another thread - proceed (fail-safe)
+                    logger.warning(f"Event loop conflict checking prerequisites for '{tool_name}': {e}")
                 except Exception as e:
                     # If we can't check prerequisites, proceed (fail-safe)
                     logger.warning(f"Failed to check prerequisites for '{tool_name}': {e}")
@@ -210,30 +210,27 @@ def prerequisite_check(
                     state_resp = await get_editor_state(ctx)
                     state_data = state_resp.data if hasattr(state_resp, "data") else None
                     if isinstance(state_data, dict):
-                        prereq = ToolPrerequisite(
-                            require_no_compile=require_no_compile,
-                            require_selection=require_selection,
-                            require_paused_for_destructive=require_paused_for_destructive,
-                            require_no_tests=require_no_tests,
-                        )
-                        is_met, blocking_reason = prereq.is_met(state_data)
-                        if not is_met:
-                            advice = state_data.get("advice", {})
-                            blocking_reasons = advice.get("blocking_reasons", []) if isinstance(advice, dict) else []
-                            from models import MCPResponse
-                            return MCPResponse(
-                                success=False,
-                                error="prerequisite_failed",
-                                message=f"Tool '{tool_name}' is not available: {blocking_reason}",
-                                data={
-                                    "tool": tool_name,
-                                    "blocking_reason": blocking_reason,
-                                    "current_state": {
-                                        "ready_for_tools": advice.get("ready_for_tools"),
-                                        "blocking_reasons": blocking_reasons,
-                                    } if isinstance(state_data.get("advice"), dict) else None
-                                }
-                            )
+                        # Reuse the already-registered ToolPrerequisite instance
+                        prereq = tool_prerequisites.get(tool_name)
+                        if prereq is not None:
+                            is_met, blocking_reason = prereq.is_met(state_data)
+                            if not is_met:
+                                advice = state_data.get("advice", {})
+                                blocking_reasons = advice.get("blocking_reasons", []) if isinstance(advice, dict) else []
+                                from models import MCPResponse
+                                return MCPResponse(
+                                    success=False,
+                                    error="prerequisite_failed",
+                                    message=f"Tool '{tool_name}' is not available: {blocking_reason}",
+                                    data={
+                                        "tool": tool_name,
+                                        "blocking_reason": blocking_reason,
+                                        "current_state": {
+                                            "ready_for_tools": advice.get("ready_for_tools"),
+                                            "blocking_reasons": blocking_reasons,
+                                        } if isinstance(state_data.get("advice"), dict) else None
+                                    }
+                                )
                 except Exception as e:
                     # If we can't check prerequisites, proceed (fail-safe)
                     logger.warning(f"Failed to check prerequisites for '{tool_name}': {e}")

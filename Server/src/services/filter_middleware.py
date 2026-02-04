@@ -2,6 +2,11 @@
 
 This module provides middleware that filters the tool list based on editor state
 before sending it to the LLM. Tools that don't meet their prerequisites are hidden.
+
+TODO: Integrate get_tools_matching_state() into the FastMCP tool listing flow.
+Currently, tools are filtered at execution time via the @prerequisite_check decorator,
+but filtering at list-time would prevent LLMs from seeing unavailable tools entirely.
+Integration point: Add a middleware hook to modify the tools list returned to MCP clients.
 """
 
 import logging
@@ -71,6 +76,10 @@ async def get_tools_matching_state(
 
 class FilterResult:
     """Outcome of prerequisite evaluation for a tool.
+
+    NOTE: This class is reserved for future use in providing detailed filtering
+    results to clients (e.g., for debugging or UI feedback). Currently used in tests
+    to verify filtering behavior.
 
     Attributes:
         tool_name: The name of the tool

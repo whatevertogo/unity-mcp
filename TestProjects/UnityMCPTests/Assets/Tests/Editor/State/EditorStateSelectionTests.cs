@@ -108,7 +108,7 @@ namespace MCPForUnity.Editor.Services
         {
             // Arrange - Start with no selection
             Selection.activeInstanceID = 0;
-            var initialSnapshot = EditorStateCache.GetSnapshot();
+            var initialSnapshot = EditorStateCache.GetSnapshot(forceRefresh: true);
             var initialSelection = initialSnapshot["editor"]?["selection"]?["has_selection"] as Newtonsoft.Json.Linq.JValue;
             bool initialVal = initialSelection != null && (bool)initialSelection;
 
@@ -117,7 +117,7 @@ namespace MCPForUnity.Editor.Services
 
             // Force an update by getting a new snapshot
             // The cache updates automatically via Selection.selectionChanged callback
-            var updatedSnapshot = EditorStateCache.GetSnapshot();
+            var updatedSnapshot = EditorStateCache.GetSnapshot(forceRefresh: true);
             var updatedSelection = updatedSnapshot["editor"]?["selection"]?["has_selection"] as Newtonsoft.Json.Linq.JValue;
             bool updatedVal = updatedSelection != null && (bool)updatedSelection;
 

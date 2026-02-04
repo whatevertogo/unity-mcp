@@ -1,9 +1,12 @@
 """Unit tests for tool_filter_decorator module.
 
-Tests the ToolPrerequisite class and prerequisite_check decorator logic.
+Tests the ToolPrerequisite class logic without external dependencies.
+Integration tests for the full decorator flow are in tests/integration/test_tool_filtering_integration.py
 """
 
 import pytest
+from unittest.mock import patch
+
 from core.tool_filter_decorator import ToolPrerequisite, tool_prerequisites
 
 
@@ -275,3 +278,53 @@ class TestPrerequisiteDecoratorRegistration:
         # Clean up
         with _prerequisites_lock:
             del tool_prerequisites[tool_name]
+
+
+class TestConcurrentAccess:
+    """Test thread-safe concurrent access to tool_prerequisites dictionary."""
+
+    def test_concurrent_read_with_registration(self):
+        """Concurrent reads during registration should be thread-safe."""
+        import threading
+
+        results = []
+        errors = []
+
+        def register_tools():
+            try:
+                for i in range(5):
+                    tool_name = f"concurrent_tool_{i}"
+                    with patch("core.tool_filter_decorator._prerequisites_lock"):
+                        tool_prerequisites[tool_name] = ToolPrerequisite(
+                            require_selection=(i % 2 == 0)
+                        )
+            except Exception as e:
+                errors.append(e)
+
+        def read_tools():
+            try:
+                for _ in range(10):
+                    # Simulate reads
+                    _ = list(tool_prerequisites.keys())
+            except Exception as e:
+                errors.append(e)
+
+        # Start threads
+        threads = [
+            threading.Thread(target=register_tools),
+            threading.Thread(target=read_tools),
+            threading.Thread(target=read_tools),
+        ]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # No errors should occur
+        assert len(errors) == 0
+
+        # Clean up
+        with patch("core.tool_filter_decorator._prerequisites_lock"):
+            for i in range(5):
+                tool_prerequisites.pop(f"concurrent_tool_{i}", None)

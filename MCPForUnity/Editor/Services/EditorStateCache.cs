@@ -585,16 +585,19 @@ namespace MCPForUnity.Editor.Services
             };
         }
 
-        public static JObject GetSnapshot()
+        public static JObject GetSnapshot(bool forceRefresh = false)
         {
             lock (LockObj)
             {
-                // Always rebuild the snapshot to ensure we have the latest state.
-                // This is important for test scenarios where Selection.selectionChanged
-                // events may not fire reliably.
-                _cached = BuildSnapshot("get_snapshot");
+                // Defensive: if something went wrong early, rebuild once.
+                if (_cached == null || forceRefresh)
+                {
+                    _cached = BuildSnapshot(forceRefresh ? "get_snapshot_force" : "get_snapshot_rebuild");
+                }
 
-                // Return a fresh clone to prevent mutation bugs.
+                // Always return a fresh clone to prevent mutation bugs.
+                // The main GC optimization comes from state-change detection (OnUpdate)
+                // which prevents unnecessary _cached rebuilds, not from caching the clone.
                 return (JObject)_cached.DeepClone();
             }
         }

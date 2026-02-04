@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastmcp import Context
 
 from services.filter_middleware import get_tools_matching_state, FilterResult
-from core.tool_filter_decorator import tool_prerequisites, ToolPrerequisite
+from core.tool_filter_decorator import tool_prerequisites, ToolPrerequisite, prerequisite_check
 
 
 class TestCompilationFiltering:
@@ -325,3 +325,96 @@ class TestFilterResult:
         result_dict = result.to_dict()
 
         assert result_dict["blocking_reason"] is None
+
+
+class TestAsyncDecoratorWrapper:
+    """Test the async wrapper path of the prerequisite_check decorator.
+
+    These are integration tests because they verify the complete decorator flow
+    including interaction with get_editor_state.
+    """
+
+    @pytest.mark.asyncio
+    async def test_async_wrapper_prereq_met(self):
+        """Async tool should execute when prerequisites are met."""
+        # Create a mock async tool
+        @prerequisite_check(require_selection=True)
+        async def mock_async_tool(ctx):
+            return "tool_executed"
+
+        # Mock context with editor state
+        mock_ctx = MagicMock()
+        mock_state = {
+            "advice": {"blocking_reasons": [], "ready_for_tools": True},
+            "editor": {"selection": {"has_selection": True}}
+        }
+
+        with patch("services.resources.editor_state.get_editor_state", new_callable=AsyncMock) as mock_get_state:
+            mock_resp = MagicMock()
+            mock_resp.data = mock_state
+            mock_get_state.return_value = mock_resp
+
+            result = await mock_async_tool(mock_ctx)
+
+            # Tool should execute successfully
+            assert result == "tool_executed"
+
+        # Clean up
+        with patch("core.tool_filter_decorator._prerequisites_lock"):
+            tool_prerequisites.pop("mock_async_tool", None)
+
+    @pytest.mark.asyncio
+    async def test_async_wrapper_prereq_not_met(self):
+        """Async tool should return error response when prerequisites not met."""
+        @prerequisite_check(require_selection=True)
+        async def mock_async_tool(ctx):
+            return "should_not_execute"
+
+        mock_ctx = MagicMock()
+        mock_state = {
+            "advice": {"blocking_reasons": [], "ready_for_tools": True},
+            "editor": {"selection": {"has_selection": False}}
+        }
+
+        with patch("services.resources.editor_state.get_editor_state", new_callable=AsyncMock) as mock_get_state:
+            mock_resp = MagicMock()
+            mock_resp.data = mock_state
+            mock_get_state.return_value = mock_resp
+
+            result = await mock_async_tool(mock_ctx)
+
+            # Should return MCPResponse error, not execute tool
+            assert hasattr(result, "success")
+            assert result.success is False
+            assert result.error == "prerequisite_failed"
+            assert "no_selection" in result.message
+
+        # Clean up
+        with patch("core.tool_filter_decorator._prerequisites_lock"):
+            tool_prerequisites.pop("mock_async_tool", None)
+
+    @pytest.mark.asyncio
+    async def test_async_wrapper_reuses_registered_prerequisite(self):
+        """Async wrapper should reuse the registered ToolPrerequisite instance."""
+        @prerequisite_check(
+            require_no_compile=True,
+            require_selection=True,
+            require_paused_for_destructive=True,
+            require_no_tests=True
+        )
+        async def mock_tool(ctx):
+            return "executed"
+
+        tool_name = "mock_tool"
+        prereq = tool_prerequisites.get(tool_name)
+
+        # Verify the registered instance has all flags set
+        assert prereq is not None
+        assert prereq.require_no_compile is True
+        assert prereq.require_selection is True
+        assert prereq.require_paused_for_destructive is True
+        assert prereq.require_no_tests is True
+
+        # Clean up
+        with patch("core.tool_filter_decorator._prerequisites_lock"):
+            tool_prerequisites.pop(tool_name, None)
