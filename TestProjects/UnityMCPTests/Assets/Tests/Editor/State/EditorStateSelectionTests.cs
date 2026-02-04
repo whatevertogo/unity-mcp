@@ -40,8 +40,8 @@ namespace MCPForUnity.Editor.Services
             // Arrange - Ensure no selection
             Selection.activeInstanceID = 0;
 
-            // Act - Get the snapshot
-            var snapshot = EditorStateCache.GetSnapshot();
+            // Act - Get the snapshot (force refresh to get current state)
+            var snapshot = EditorStateCache.GetSnapshot(forceRefresh: true);
 
             // Assert - Verify selection state
             Assert.IsNotNull(snapshot, "Snapshot should not be null");
@@ -72,8 +72,8 @@ namespace MCPForUnity.Editor.Services
             // Arrange - Select the test GameObject
             Selection.activeGameObject = _testGameObject;
 
-            // Act - Get the snapshot
-            var snapshot = EditorStateCache.GetSnapshot();
+            // Act - Get the snapshot (force refresh to get current state)
+            var snapshot = EditorStateCache.GetSnapshot(forceRefresh: true);
 
             // Assert - Verify selection state
             var editor = snapshot["editor"] as Newtonsoft.Json.Linq.JObject;
@@ -136,8 +136,8 @@ namespace MCPForUnity.Editor.Services
             Selection.activeGameObject = _testGameObject;
             int expectedInstanceId = _testGameObject.GetInstanceID();
 
-            // Act - Get the snapshot
-            var snapshot = EditorStateCache.GetSnapshot();
+            // Act - Get the snapshot (force refresh to get current state)
+            var snapshot = EditorStateCache.GetSnapshot(forceRefresh: true);
 
             // Assert - Verify instance ID
             var editor = snapshot["editor"] as Newtonsoft.Json.Linq.JObject;
