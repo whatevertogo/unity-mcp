@@ -13,6 +13,7 @@ namespace MCPForUnity.Editor.Models
         MissingConfig, // Config file exists but missing required elements
         UnsupportedOS, // OS is not supported
         Error, // General error state
+        VersionMismatch, // Configuration version doesn't match expected version
     }
 
     /// <summary>
@@ -21,9 +22,10 @@ namespace MCPForUnity.Editor.Models
     /// </summary>
     public enum ConfiguredTransport
     {
-        Unknown, // Could not determine transport type
-        Stdio,   // Client configured for stdio transport
-        Http     // Client configured for HTTP transport
+        Unknown,    // Could not determine transport type
+        Stdio,      // Client configured for stdio transport
+        Http,       // Client configured for HTTP local transport
+        HttpRemote  // Client configured for HTTP remote-hosted transport
     }
 }
 
