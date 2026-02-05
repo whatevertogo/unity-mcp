@@ -7,6 +7,7 @@ using UnityEditor;
 using UnityEditorInternal;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using System.Collections.Generic;
 
 namespace MCPForUnity.Editor.Services
 {
@@ -15,7 +16,7 @@ namespace MCPForUnity.Editor.Services
     /// Updated on the main thread via Editor callbacks and periodic update ticks.
     /// </summary>
     [InitializeOnLoad]
-    internal static class EditorStateCache
+    public static class EditorStateCache
     {
         private static readonly object LockObj = new();
         private static long _sequence;
@@ -41,6 +42,11 @@ namespace MCPForUnity.Editor.Services
         private static bool _lastTrackedIsUpdating;
         private static bool _lastTrackedTestsRunning;
         private static string _lastTrackedActivityPhase;
+
+        // Selection state tracking for state-aware tool filtering
+        private static int _lastTrackedActiveInstanceID;
+        private static string _lastTrackedActiveGameObjectName;
+        private static int _lastTrackedSelectionCount;
 
         private static JObject _cached;
 
@@ -75,6 +81,9 @@ namespace MCPForUnity.Editor.Services
 
             [JsonProperty("transport")]
             public EditorStateTransport Transport { get; set; }
+
+            [JsonProperty("advice")]
+            public EditorStateAdvice Advice { get; set; }
         }
 
         private sealed class EditorStateUnity
@@ -105,6 +114,24 @@ namespace MCPForUnity.Editor.Services
 
             [JsonProperty("active_scene")]
             public EditorStateActiveScene ActiveScene { get; set; }
+
+            [JsonProperty("selection")]
+            public EditorStateSelection Selection { get; set; }
+        }
+
+        private sealed class EditorStateSelection
+        {
+            [JsonProperty("has_selection")]
+            public bool HasSelection { get; set; }
+
+            [JsonProperty("active_instance_id")]
+            public int ActiveInstanceID { get; set; }
+
+            [JsonProperty("active_game_object_name")]
+            public string ActiveGameObjectName { get; set; }
+
+            [JsonProperty("selection_count")]
+            public int SelectionCount { get; set; }
         }
 
         private sealed class EditorStatePlayMode
@@ -230,6 +257,21 @@ namespace MCPForUnity.Editor.Services
             public object Counts { get; set; }
         }
 
+        private sealed class EditorStateAdvice
+        {
+            [JsonProperty("ready_for_tools")]
+            public bool ReadyForTools { get; set; }
+
+            [JsonProperty("blocking_reasons")]
+            public string[] BlockingReasons { get; set; }
+
+            [JsonProperty("recommended_retry_after_ms")]
+            public long? RecommendedRetryAfterMs { get; set; }
+
+            [JsonProperty("recommended_next_action")]
+            public string RecommendedNextAction { get; set; }
+        }
+
         private sealed class EditorStateTransport
         {
             [JsonProperty("unity_bridge_connected")]
@@ -249,6 +291,7 @@ namespace MCPForUnity.Editor.Services
 
                 EditorApplication.update += OnUpdate;
                 EditorApplication.playModeStateChanged += _ => ForceUpdate("playmode");
+                Selection.selectionChanged += () => ForceUpdate("selection");
 
                 AssemblyReloadEvents.beforeAssemblyReload += () =>
                 {
@@ -296,6 +339,11 @@ namespace MCPForUnity.Editor.Services
             bool isUpdating = EditorApplication.isUpdating;
             bool testsRunning = TestRunStatus.IsRunning;
 
+            // Selection state reading for state-aware tool filtering
+            int activeInstanceID = Selection.activeInstanceID;
+            string activeGameObjectName = Selection.activeGameObject?.name ?? string.Empty;
+            int selectionCount = Selection.count;
+
             var activityPhase = "idle";
             if (testsRunning)
             {
@@ -326,7 +374,10 @@ namespace MCPForUnity.Editor.Services
                 || _lastTrackedIsPaused != isPaused
                 || _lastTrackedIsUpdating != isUpdating
                 || _lastTrackedTestsRunning != testsRunning
-                || _lastTrackedActivityPhase != activityPhase;
+                || _lastTrackedActivityPhase != activityPhase
+                || _lastTrackedActiveInstanceID != activeInstanceID
+                || _lastTrackedActiveGameObjectName != activeGameObjectName
+                || _lastTrackedSelectionCount != selectionCount;
 
             if (!hasChanges)
             {
@@ -344,6 +395,9 @@ namespace MCPForUnity.Editor.Services
             _lastTrackedIsUpdating = isUpdating;
             _lastTrackedTestsRunning = testsRunning;
             _lastTrackedActivityPhase = activityPhase;
+            _lastTrackedActiveInstanceID = activeInstanceID;
+            _lastTrackedActiveGameObjectName = activeGameObjectName;
+            _lastTrackedSelectionCount = selectionCount;
 
             _lastUpdateTimeSinceStartup = now;
             ForceUpdate("tick");
@@ -404,6 +458,11 @@ namespace MCPForUnity.Editor.Services
                 activityPhase = "playmode_transition";
             }
 
+            // Read current selection state directly for snapshot
+            int currentActiveInstanceID = Selection.activeInstanceID;
+            string currentActiveGameObjectName = Selection.activeGameObject?.name ?? string.Empty;
+            int currentSelectionCount = Selection.count;
+
             var snapshot = new EditorStateSnapshot
             {
                 SchemaVersion = "unity-mcp/editor_state@2",
@@ -431,6 +490,13 @@ namespace MCPForUnity.Editor.Services
                         Path = scenePath,
                         Guid = sceneGuid,
                         Name = scene.name ?? string.Empty
+                    },
+                    Selection = new EditorStateSelection
+                    {
+                        HasSelection = currentSelectionCount > 0,
+                        ActiveInstanceID = currentActiveInstanceID,
+                        ActiveGameObjectName = currentActiveGameObjectName,
+                        SelectionCount = currentSelectionCount
                     }
                 },
                 Activity = new EditorStateActivity
@@ -482,20 +548,51 @@ namespace MCPForUnity.Editor.Services
                 {
                     UnityBridgeConnected = null,
                     LastMessageUnixMs = null
-                }
+                },
+                Advice = BuildEditorStateAdvice(isCompiling, testsRunning)
             };
 
             return JObject.FromObject(snapshot);
         }
 
-        public static JObject GetSnapshot()
+        private static EditorStateAdvice BuildEditorStateAdvice(bool isCompiling, bool testsRunning)
+        {
+            var blockingReasons = new List<string>();
+
+            if (isCompiling)
+            {
+                blockingReasons.Add("compiling");
+            }
+
+            if (_domainReloadPending)
+            {
+                blockingReasons.Add("domain_reload");
+            }
+
+            if (testsRunning)
+            {
+                blockingReasons.Add("tests_running");
+            }
+
+            bool readyForTools = blockingReasons.Count == 0;
+
+            return new EditorStateAdvice
+            {
+                ReadyForTools = readyForTools,
+                BlockingReasons = blockingReasons.ToArray(),
+                RecommendedRetryAfterMs = isCompiling ? 1000 : null,
+                RecommendedNextAction = isCompiling ? "wait_for_compile" : null
+            };
+        }
+
+        public static JObject GetSnapshot(bool forceRefresh = false)
         {
             lock (LockObj)
             {
                 // Defensive: if something went wrong early, rebuild once.
-                if (_cached == null)
+                if (_cached == null || forceRefresh)
                 {
-                    _cached = BuildSnapshot("rebuild");
+                    _cached = BuildSnapshot(forceRefresh ? "get_snapshot_force" : "get_snapshot_rebuild");
                 }
 
                 // Always return a fresh clone to prevent mutation bugs.
