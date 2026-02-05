@@ -8,6 +8,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from core.tool_filter_decorator import prerequisite_check
 from transport.unity_transport import send_with_unity_instance
 import transport.legacy.unity_connection
 
