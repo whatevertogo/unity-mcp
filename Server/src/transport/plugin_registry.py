@@ -26,6 +26,7 @@ class PluginSession:
     # Full path to project root (for focus nudging)
     project_path: str | None = None
     user_id: str | None = None  # Associated user id (None for local mode)
+    keep_server_running: bool = False  # When True, server stays running after Unity disconnects
 
 
 class PluginRegistry:
@@ -55,6 +56,7 @@ class PluginRegistry:
         unity_version: str,
         project_path: str | None = None,
         user_id: str | None = None,
+        keep_server_running: bool = False,
     ) -> PluginSession:
         """Register (or replace) a plugin session.
 
@@ -76,6 +78,7 @@ class PluginRegistry:
                 connected_at=now,
                 project_path=project_path,
                 user_id=user_id,
+                keep_server_running=keep_server_running,
             )
 
             # Remove old mapping for this hash if it existed under a different session

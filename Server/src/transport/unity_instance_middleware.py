@@ -145,6 +145,9 @@ class UnityInstanceMiddleware(Middleware):
                 try:
                     # Import here to avoid circular imports in legacy transport paths.
                     from transport.legacy.unity_connection import get_unity_connection_pool
+                    # Also import main module to access global keep_server_running dict
+                    import sys
+                    from .. import main
 
                     pool = get_unity_connection_pool()
                     instances = pool.discover_all_instances(force_refresh=True)
