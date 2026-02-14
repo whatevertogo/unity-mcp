@@ -9,8 +9,12 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.utils import parse_json_payload, normalize_properties
-from services.tools.preflight import preflight
+from services.tools.utils import (
+    normalize_param_map,
+    rule_non_placeholder_string,
+    rule_object,
+)
+from services.tools.preflight import preflight, preflight_guard
 
 
 @mcp_for_unity_tool(
@@ -22,6 +26,7 @@ from services.tools.preflight import preflight
         "For creating/deleting GameObjects themselves, use manage_gameobject instead."
     )
 )
+@preflight_guard(wait_for_no_compile=True, refresh_if_dirty=True)
 async def manage_components(
     ctx: Context,
     action: Annotated[
@@ -47,8 +52,8 @@ async def manage_components(
                      "Value to set (for set_property action)"] | None = None,
     # For add/set_property - multiple properties
     properties: Annotated[
-        dict[str, Any],
-        "Dictionary of property names to values. Example: {\"mass\": 5.0, \"useGravity\": false}"
+        dict[str, Any] | str,
+        "Dictionary of property names to values. Example: {\"mass\": 5.0, \"useGravity\": false}."
     ] | None = None,
 ) -> dict[str, Any]:
     """
@@ -66,10 +71,6 @@ async def manage_components(
     - Set multiple properties: action="set_property", target="Enemy", component_type="Rigidbody", properties={"mass": 5.0, "useGravity": false}
     """
     unity_instance = get_unity_instance_from_context(ctx)
-
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
 
     if not action:
         return {
@@ -89,14 +90,21 @@ async def manage_components(
             "message": "Missing required parameter 'component_type'. Specify the component type name."
         }
 
-    # --- Normalize properties with detailed error handling ---
-    properties, props_error = normalize_properties(properties)
-    if props_error:
-        return {"success": False, "message": props_error}
+    normalized_params, normalization_error = normalize_param_map(
+        {
+            "properties": properties,
+            "value": value,
+        },
+        [
+            rule_object("properties"),
+            rule_non_placeholder_string("value"),
+        ],
+    )
+    if normalization_error:
+        return {"success": False, "message": normalization_error}
 
-    # --- Validate value parameter for serialization issues ---
-    if value is not None and isinstance(value, str) and value in ("[object Object]", "undefined"):
-        return {"success": False, "message": f"value received invalid input: '{value}'. Expected an actual value."}
+    properties = normalized_params.get("properties") if normalized_params else None
+    value = normalized_params.get("value") if normalized_params else None
 
     try:
         params = {

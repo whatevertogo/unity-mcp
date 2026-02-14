@@ -10,8 +10,8 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.utils import coerce_bool, coerce_int
-from services.tools.preflight import preflight
+from services.tools.utils import normalize_param_map, rule_bool, rule_int
+from services.tools.preflight import preflight, preflight_guard
 
 
 @mcp_for_unity_tool(
@@ -23,6 +23,7 @@ from services.tools.preflight import preflight
         "For CRUD operations (create/modify/delete), use manage_gameobject instead."
     )
 )
+@preflight_guard(wait_for_no_compile=True, refresh_if_dirty=True)
 async def find_gameobjects(
     ctx: Context,
     search_term: Annotated[
@@ -78,23 +79,28 @@ async def find_gameobjects(
             "message": "Missing required parameter 'search_term'. Specify what to search for."
         }
 
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
-
-    # Coerce parameters
-    include_inactive = coerce_bool(include_inactive, default=False)
-    page_size = coerce_int(page_size, default=50)
-    cursor = coerce_int(cursor, default=0)
+    normalized_params, normalization_error = normalize_param_map(
+        {
+            "include_inactive": include_inactive,
+            "page_size": page_size,
+            "cursor": cursor,
+        },
+        [
+            rule_bool("include_inactive", output_key="includeInactive", default=False),
+            rule_int("page_size", output_key="pageSize", default=50),
+            rule_int("cursor", default=0),
+        ],
+    )
+    if normalization_error:
+        return {"success": False, "message": normalization_error}
 
     try:
         params = {
             "searchMethod": search_method,
             "searchTerm": search_term,
-            "includeInactive": include_inactive,
-            "pageSize": page_size,
-            "cursor": cursor,
         }
+        if normalized_params:
+            params.update(normalized_params)
         params = {k: v for k, v in params.items() if v is not None}
 
         response = await send_with_unity_instance(

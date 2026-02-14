@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
@@ -221,35 +222,170 @@ namespace MCPForUnity.Editor.Tools
                 return new JObject();
             }
 
+            var normalized = NormalizeObjectRecursive(source);
+            NormalizationMetrics.MaybeEmitMetrics();
+            return normalized;
+        }
+
+        /// <summary>
+        /// Recursively normalizes a JObject, converting snake_case keys to camelCase
+        /// while preserving Unity serialized field names that start with "m_".
+        /// </summary>
+        private static JObject NormalizeObjectRecursive(JObject source)
+        {
+            NormalizationMetrics.IncrementNormalizedObjects();
             var normalized = new JObject();
+            var collisionTracker = new Dictionary<string, string>(); // normalizedKey -> originalKey kept
+
             foreach (var property in source.Properties())
             {
-                string normalizedName = ToCamelCase(property.Name);
-                normalized[normalizedName] = NormalizeToken(property.Value);
+                string originalKey = property.Name;
+                string targetKey = ShouldPreserveKey(originalKey) ? originalKey : ToCamelCase(originalKey);
+
+                // Handle key collision: prefer keys that were already camelCase
+                if (normalized.ContainsKey(targetKey))
+                {
+                    NormalizationMetrics.IncrementKeyCollisions();
+                    string previousOriginal = collisionTracker[targetKey];
+                    bool previousWasCamelCase = previousOriginal == targetKey;
+                    bool currentIsCamelCase = originalKey == targetKey;
+
+                    if (currentIsCamelCase && !previousWasCamelCase)
+                    {
+                        NormalizationMetrics.IncrementCamelCaseCollisionWins();
+                        // Current key is explicitly camelCase, replace previous
+                        McpLog.Warn($"BatchExecute key collision: '{targetKey}' from '{previousOriginal}' replaced by '{originalKey}' (explicit camelCase preferred)");
+                        normalized[targetKey] = NormalizeValueRecursive(property.Value);
+                        collisionTracker[targetKey] = originalKey;
+                    }
+                    else
+                    {
+                        // Keep previous, warn about dropped key
+                        McpLog.Warn($"BatchExecute key collision: '{originalKey}' normalizes to '{targetKey}' but key already exists from '{previousOriginal}'");
+                    }
+                }
+                else
+                {
+                    normalized[targetKey] = NormalizeValueRecursive(property.Value);
+                    collisionTracker[targetKey] = originalKey;
+                }
             }
             return normalized;
         }
 
-        private static JArray NormalizeArray(JArray source)
+        /// <summary>
+        /// Recursively normalizes a JToken value (JObject, JArray, or scalar).
+        /// </summary>
+        private static JToken NormalizeValueRecursive(JToken value)
         {
-            var normalized = new JArray();
-            foreach (var token in source)
+            if (value == null)
             {
-                normalized.Add(NormalizeToken(token));
+                return null;
             }
-            return normalized;
+
+            if (value is JObject obj)
+            {
+                return NormalizeObjectRecursive(obj);
+            }
+
+            if (value is JArray array)
+            {
+                var normalizedArray = new JArray();
+                foreach (var item in array)
+                {
+                    normalizedArray.Add(NormalizeValueRecursive(item));
+                }
+                return normalizedArray;
+            }
+
+            // Scalar value - just clone
+            return value.DeepClone();
         }
 
-        private static JToken NormalizeToken(JToken token)
+        /// <summary>
+        /// Determines if a key should be preserved as-is (not converted to camelCase).
+        /// Unity serialized field names starting with "m_" or shader property names
+        /// starting with "_" must be preserved.
+        /// </summary>
+        private static bool ShouldPreserveKey(string key)
         {
-            return token switch
+            bool shouldPreserve = key != null && (
+                key.StartsWith("m_", System.StringComparison.Ordinal) ||
+                key.StartsWith("_", System.StringComparison.Ordinal));
+            if (shouldPreserve)
             {
-                JObject obj => NormalizeParameterKeys(obj),
-                JArray arr => NormalizeArray(arr),
-                _ => token.DeepClone()
-            };
+                NormalizationMetrics.IncrementPreservedKeys();
+            }
+            return shouldPreserve;
         }
+
+        /// <summary>
+        /// Exposes normalization stats for testing/inspection.
+        /// </summary>
+        internal static IReadOnlyDictionary<string, long> GetKeyNormalizationStats() =>
+            NormalizationMetrics.GetStats();
 
         private static string ToCamelCase(string key) => StringCaseUtility.ToCamelCase(key);
+
+        /// <summary>
+        /// Internal class for tracking key normalization metrics.
+        /// Separated to keep main BatchExecute logic focused.
+        /// </summary>
+        private static class NormalizationMetrics
+        {
+            private const int EmitInterval = 200;
+            private static long s_totalNormalizeCalls;
+            private static long s_totalNormalizedObjects;
+            private static long s_totalPreservedKeys;
+            private static long s_totalKeyCollisions;
+            private static long s_totalCamelCaseCollisionWins;
+
+            public static void IncrementNormalizedObjects() => Interlocked.Increment(ref s_totalNormalizedObjects);
+
+            public static void IncrementPreservedKeys() => Interlocked.Increment(ref s_totalPreservedKeys);
+
+            public static void IncrementKeyCollisions() => Interlocked.Increment(ref s_totalKeyCollisions);
+
+            public static void IncrementCamelCaseCollisionWins() => Interlocked.Increment(ref s_totalCamelCaseCollisionWins);
+
+            /// <summary>
+            /// 
+            /// </summary>
+            public static void MaybeEmitMetrics()
+            {
+                long totalCalls = Interlocked.Increment(ref s_totalNormalizeCalls);
+                if (totalCalls % EmitInterval != 0)
+                {
+                    return;
+                }
+
+                var stats = GetStats();
+                TelemetryHelper.RecordEvent("batch_execute_key_normalization_stats", new Dictionary<string, object>
+                {
+                    ["normalize_calls"] = stats["normalizeCalls"],
+                    ["normalized_objects"] = stats["normalizedObjects"],
+                    ["preserved_keys"] = stats["preservedKeys"],
+                    ["key_collisions"] = stats["keyCollisions"],
+                    ["camel_case_collision_wins"] = stats["camelCaseCollisionWins"],
+                });
+
+                McpLog.Debug(
+                    $"BatchExecute key normalization stats: calls={stats["normalizeCalls"]}, " +
+                    $"objects={stats["normalizedObjects"]}, preserved={stats["preservedKeys"]}, " +
+                    $"collisions={stats["keyCollisions"]}, camelWins={stats["camelCaseCollisionWins"]}");
+            }
+
+            public static IReadOnlyDictionary<string, long> GetStats()
+            {
+                return new Dictionary<string, long>
+                {
+                    ["normalizeCalls"] = Interlocked.Read(ref s_totalNormalizeCalls),
+                    ["normalizedObjects"] = Interlocked.Read(ref s_totalNormalizedObjects),
+                    ["preservedKeys"] = Interlocked.Read(ref s_totalPreservedKeys),
+                    ["keyCollisions"] = Interlocked.Read(ref s_totalKeyCollisions),
+                    ["camelCaseCollisionWins"] = Interlocked.Read(ref s_totalCamelCaseCollisionWins),
+                };
+            }
+        }
     }
 }

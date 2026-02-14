@@ -8,7 +8,12 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import coerce_int, coerce_bool, parse_json_payload
+from services.tools.utils import (
+    normalize_json_list,
+    normalize_param_map,
+    rule_bool,
+    rule_int,
+)
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -37,7 +42,7 @@ async def read_console(
                      "Max messages to return in non-paging mode (accepts int or string, e.g., 5 or '5'). Ignored when paging with page_size/cursor."] | None = None,
     filter_text: Annotated[str, "Text filter for messages"] | None = None,
     since_timestamp: Annotated[str,
-                               "Get messages after this timestamp (ISO 8601)"] | None = None,
+                               "Filter for messages after this timestamp (ISO 8601). Note: Unity's console API doesn't expose timestamps, so this parameter is accepted but filtering is not implemented."] | None = None,
     page_size: Annotated[int | str,
                          "Page size for paginated console reads. Defaults to 50 when omitted."] | None = None,
     cursor: Annotated[int | str,
@@ -54,8 +59,16 @@ async def read_console(
     action = action if action is not None else 'get'
     
     # Parse types if it's a JSON string (handles client compatibility issue #561)
-    if isinstance(types, str):
-        types = parse_json_payload(types)
+    types, types_parse_error = normalize_json_list(types, "types")
+    if types_parse_error:
+        return {
+            "success": False,
+            "message": (
+                f"types must be a list, got str. "
+                f"If passing as JSON string, use format: '[\"error\", \"warning\"]'. {types_parse_error}"
+            )
+        }
+
     # Validate types is a list after parsing
     if types is not None and not isinstance(types, list):
         return {
@@ -90,10 +103,22 @@ async def read_console(
     
     format = format if format is not None else 'plain'
     # Coerce booleans defensively (strings like 'true'/'false')
+    normalized_params, normalization_error = normalize_param_map(
+        {
+            "include_stacktrace": include_stacktrace,
+            "page_size": page_size,
+            "cursor": cursor,
+        },
+        [
+            rule_bool("include_stacktrace", output_key="includeStacktrace", default=False),
+            rule_int("page_size", output_key="pageSize"),
+            rule_int("cursor"),
+        ],
+    )
+    if normalization_error:
+        return {"success": False, "message": normalization_error}
 
-    include_stacktrace = coerce_bool(include_stacktrace, default=False)
-    coerced_page_size = coerce_int(page_size, default=None)
-    coerced_cursor = coerce_int(cursor, default=None)
+    include_stacktrace = normalized_params.get("includeStacktrace", False) if normalized_params else False
 
     # Normalize action if it's a string
     if isinstance(action, str):
@@ -107,7 +132,10 @@ async def read_console(
     if isinstance(count, str) and count.strip().lower() in ("all", "*"):
         count = None
     else:
-        count = coerce_int(count)
+        count_map, count_error = normalize_param_map({"count": count}, [rule_int("count")])
+        if count_error:
+            return {"success": False, "message": count_error}
+        count = count_map.get("count") if count_map else None
 
     if action == "get" and count is None:
         count = 10
@@ -119,11 +147,11 @@ async def read_console(
         "count": count,
         "filterText": filter_text,
         "sinceTimestamp": since_timestamp,
-        "pageSize": coerced_page_size,
-        "cursor": coerced_cursor,
         "format": format.lower() if isinstance(format, str) else format,
-        "includeStacktrace": include_stacktrace
     }
+    # Merge in any normalized parameters
+    if normalized_params:
+        params_dict.update(normalized_params)
 
     # Remove None values unless it's 'count' (as None might mean 'all')
     params_dict = {k: v for k, v in params_dict.items()

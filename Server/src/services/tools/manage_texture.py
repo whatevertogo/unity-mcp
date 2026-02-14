@@ -10,16 +10,26 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import parse_json_payload, coerce_bool, coerce_int, normalize_color
+from services.tools.utils import (
+    coerce_bool,
+    coerce_int,
+    normalize_color,
+    normalize_json_list,
+    normalize_object,
+    normalize_param_map,
+    parse_json_payload,
+    rule_int,
+)
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.preflight import preflight
+from services.tools.preflight import preflight, preflight_guard
 
 
 def _normalize_dimension(value: Any, name: str, default: int = 64) -> tuple[int | None, str | None]:
     if value is None:
         return default, None
-    coerced = coerce_int(value)
+    coerced_map, _ = normalize_param_map({name: value}, [rule_int(name)])
+    coerced = coerced_map.get(name) if coerced_map else None
     if coerced is None:
         return None, f"{name} must be an integer"
     if coerced <= 0:
@@ -30,7 +40,8 @@ def _normalize_dimension(value: Any, name: str, default: int = 64) -> tuple[int 
 def _normalize_positive_int(value: Any, name: str) -> tuple[int | None, str | None]:
     if value is None:
         return None, None
-    coerced = coerce_int(value)
+    coerced_map, _ = normalize_param_map({name: value}, [rule_int(name)])
+    coerced = coerced_map.get(name) if coerced_map else None
     if coerced is None or coerced <= 0:
         return None, f"{name} must be a positive integer"
     return coerced, None
@@ -49,19 +60,10 @@ def _normalize_palette(value: Any) -> tuple[list[list[int]] | None, str | None]:
     if value is None:
         return None, None
 
-    # Try parsing as string first
-    if isinstance(value, str):
-        if value in ("[object Object]", "undefined", "null", ""):
-            return None, f"palette received invalid value: '{value}'"
-        parsed = parse_json_payload(value)
-        # If parsing succeeded and result is a list, normalize and return
-        if isinstance(parsed, list):
-            value = parsed
-        # If parsing returned the original string (invalid JSON), treat as error
-        elif parsed == value:
-            return None, f"palette must be a list of colors, got invalid string: '{value}'"
-        else:
-            return None, f"palette must be a list of colors (list), got string that parsed to {type(parsed).__name__}"
+    parsed_palette, parse_error = normalize_json_list(value, "palette")
+    if parse_error:
+        return None, parse_error
+    value = parsed_palette
 
     # Validate and normalize each color in the palette
     if not isinstance(value, list):
@@ -384,6 +386,7 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
         destructiveHint=True,
     ),
 )
+@preflight_guard(wait_for_no_compile=True, refresh_if_dirty=True)
 async def manage_texture(
     ctx: Context,
     action: Annotated[Literal[
@@ -440,15 +443,15 @@ async def manage_texture(
                        "Number of noise octaves for detail (default: 1)"] | None = None,
 
     # Modify action
-    set_pixels: Annotated[dict,
-                          "Region to modify: {x, y, width, height, color or pixels}"] | None = None,
+    set_pixels: Annotated[dict | str,
+                          "Region to modify: {x, y, width, height, color or pixels}. Accepts JSON string."] | None = None,
 
     # Sprite creation (legacy, prefer import_settings)
-    as_sprite: Annotated[dict | bool,
-                         "Configure as sprite: {pivot: [x,y], pixels_per_unit: 100} or true for defaults"] | None = None,
+    as_sprite: Annotated[dict | bool | str,
+                         "Configure as sprite: {pivot: [x,y], pixels_per_unit: 100} or true for defaults."] | None = None,
 
     # TextureImporter settings
-    import_settings: Annotated[dict,
+    import_settings: Annotated[dict | str,
         "TextureImporter settings dict. Keys: texture_type (default/normal_map/sprite/etc), "
         "texture_shape (2d/cube), srgb (bool), alpha_source (none/from_input/from_gray_scale), "
         "alpha_is_transparency (bool), readable (bool), generate_mipmaps (bool), "
@@ -460,11 +463,6 @@ async def manage_texture(
 
 ) -> dict[str, Any]:
     unity_instance = get_unity_instance_from_context(ctx)
-
-    # Preflight check
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
 
     # --- Normalize parameters ---
     fill_color, fill_error = _normalize_color_int(fill_color)
@@ -526,11 +524,9 @@ async def manage_texture(
     # Normalize set_pixels for modify action
     set_pixels_normalized = None
     if set_pixels is not None:
-        if isinstance(set_pixels, str):
-            parsed = parse_json_payload(set_pixels)
-            if not isinstance(parsed, dict):
-                return {"success": False, "message": "set_pixels must be a JSON object"}
-            set_pixels = parsed
+        set_pixels, set_pixels_error = normalize_object(set_pixels, "set_pixels")
+        if set_pixels_error:
+            return {"success": False, "message": "set_pixels must be a JSON object"}
         if not isinstance(set_pixels, dict):
             return {"success": False, "message": "set_pixels must be a JSON object"}
 
@@ -541,8 +537,18 @@ async def manage_texture(
                 return {"success": False, "message": f"set_pixels.color: {error}"}
             set_pixels_normalized["color"] = color
         if "pixels" in set_pixels_normalized:
-            region_width = coerce_int(set_pixels_normalized.get("width"))
-            region_height = coerce_int(set_pixels_normalized.get("height"))
+            region_dims, _ = normalize_param_map(
+                {
+                    "width": set_pixels_normalized.get("width"),
+                    "height": set_pixels_normalized.get("height"),
+                },
+                [
+                    rule_int("width"),
+                    rule_int("height"),
+                ],
+            )
+            region_width = region_dims.get("width") if region_dims else None
+            region_height = region_dims.get("height") if region_dims else None
             if region_width is None or region_height is None or region_width <= 0 or region_height <= 0:
                 return {"success": False, "message": "set_pixels width and height must be positive integers"}
             pixels_normalized, pixels_error = _normalize_pixels(

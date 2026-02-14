@@ -8,7 +8,7 @@ from core.telemetry import is_telemetry_enabled, record_tool_usage
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.utils import coerce_bool
+from services.tools.utils import normalize_param_map, rule_bool
 
 
 @mcp_for_unity_tool(
@@ -32,7 +32,12 @@ async def manage_editor(
     # Get active instance from request state (injected by middleware)
     unity_instance = get_unity_instance_from_context(ctx)
 
-    wait_for_completion = coerce_bool(wait_for_completion)
+    normalized_params, normalization_error = normalize_param_map(
+        {"wait_for_completion": wait_for_completion},
+        [rule_bool("wait_for_completion", output_key="waitForCompletion")],
+    )
+    if normalization_error:
+        return {"success": False, "message": normalization_error}
 
     try:
         # Diagnostics: quick telemetry checks
@@ -45,11 +50,12 @@ async def manage_editor(
         # Prepare parameters, removing None values
         params = {
             "action": action,
-            "waitForCompletion": wait_for_completion,
             "toolName": tool_name,
             "tagName": tag_name,
             "layerName": layer_name,
         }
+        if normalized_params:
+            params.update(normalized_params)
         params = {k: v for k, v in params.items() if v is not None}
 
         # Send command using centralized retry helper with instance routing

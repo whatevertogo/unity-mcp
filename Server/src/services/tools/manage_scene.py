@@ -5,10 +5,10 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import coerce_int, coerce_bool
+from services.tools.utils import normalize_param_map, rule_bool, rule_int
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.preflight import preflight
+from services.tools.preflight import preflight, preflight_guard
 
 
 @mcp_for_unity_tool(
@@ -18,6 +18,7 @@ from services.tools.preflight import preflight
         destructiveHint=True,
     ),
 )
+@preflight_guard(wait_for_no_compile=True, refresh_if_dirty=True)
 async def manage_scene(
     ctx: Context,
     action: Annotated[Literal[
@@ -56,48 +57,46 @@ async def manage_scene(
     # Get active instance from session state
     # Removed session_state import
     unity_instance = get_unity_instance_from_context(ctx)
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
     try:
-        coerced_build_index = coerce_int(build_index, default=None)
-        coerced_super_size = coerce_int(screenshot_super_size, default=None)
-        coerced_page_size = coerce_int(page_size, default=None)
-        coerced_cursor = coerce_int(cursor, default=None)
-        coerced_max_nodes = coerce_int(max_nodes, default=None)
-        coerced_max_depth = coerce_int(max_depth, default=None)
-        coerced_max_children_per_node = coerce_int(
-            max_children_per_node, default=None)
-        coerced_include_transform = coerce_bool(
-            include_transform, default=None)
+        normalized_params, normalization_error = normalize_param_map(
+            {
+                "build_index": build_index,
+                "screenshot_super_size": screenshot_super_size,
+                "page_size": page_size,
+                "cursor": cursor,
+                "max_nodes": max_nodes,
+                "max_depth": max_depth,
+                "max_children_per_node": max_children_per_node,
+                "include_transform": include_transform,
+            },
+            [
+                rule_int("build_index", output_key="buildIndex"),
+                rule_int("screenshot_super_size", output_key="superSize"),
+                rule_int("page_size", output_key="pageSize"),
+                rule_int("cursor"),
+                rule_int("max_nodes", output_key="maxNodes"),
+                rule_int("max_depth", output_key="maxDepth"),
+                rule_int("max_children_per_node", output_key="maxChildrenPerNode"),
+                rule_bool("include_transform", output_key="includeTransform"),
+            ],
+        )
+        if normalization_error:
+            return {"success": False, "message": normalization_error}
 
         params: dict[str, Any] = {"action": action}
         if name:
             params["name"] = name
         if path:
             params["path"] = path
-        if coerced_build_index is not None:
-            params["buildIndex"] = coerced_build_index
         if screenshot_file_name:
             params["fileName"] = screenshot_file_name
-        if coerced_super_size is not None:
-            params["superSize"] = coerced_super_size
 
         # get_hierarchy paging/safety params (optional)
         if parent is not None:
             params["parent"] = parent
-        if coerced_page_size is not None:
-            params["pageSize"] = coerced_page_size
-        if coerced_cursor is not None:
-            params["cursor"] = coerced_cursor
-        if coerced_max_nodes is not None:
-            params["maxNodes"] = coerced_max_nodes
-        if coerced_max_depth is not None:
-            params["maxDepth"] = coerced_max_depth
-        if coerced_max_children_per_node is not None:
-            params["maxChildrenPerNode"] = coerced_max_children_per_node
-        if coerced_include_transform is not None:
-            params["includeTransform"] = coerced_include_transform
+
+        if normalized_params:
+            params.update(normalized_params)
 
         # Use centralized retry helper with instance routing
         response = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_scene", params)

@@ -9,8 +9,10 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.utils import normalize_param_map, rule_bool, rule_int
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+from models.models import MCPResponse
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +85,7 @@ async def batch_execute(
                          "Stop processing after the first failure"] = None,
     max_parallelism: Annotated[int | None,
                                "Hint for the maximum number of parallel workers"] = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | MCPResponse:
     """Proxy the batch_execute tool to the Unity Editor transporter."""
     unity_instance = get_unity_instance_from_context(ctx)
 
@@ -125,12 +127,25 @@ async def batch_execute(
         "commands": normalized_commands,
     }
 
-    if parallel is not None:
-        payload["parallel"] = bool(parallel)
-    if fail_fast is not None:
-        payload["failFast"] = bool(fail_fast)
-    if max_parallelism is not None:
-        payload["maxParallelism"] = int(max_parallelism)
+    normalized_options, options_error = normalize_param_map(
+        {
+            "parallel": parallel,
+            "fail_fast": fail_fast,
+            "max_parallelism": max_parallelism,
+        },
+        [
+            rule_bool("parallel"),
+            rule_bool("fail_fast", output_key="failFast"),
+            rule_int("max_parallelism", output_key="maxParallelism"),
+        ],
+    )
+    if options_error:
+        raise ValueError(options_error)
+    if max_parallelism is not None and (not normalized_options or "maxParallelism" not in normalized_options):
+        raise ValueError("max_parallelism must be an integer")
+    # Merge in any normalized parameters
+    if normalized_options:
+        payload.update(normalized_options)
 
     return await send_with_unity_instance(
         async_send_command_with_retry,

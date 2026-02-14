@@ -5,6 +5,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.utils import normalize_param_map, rule_object
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -87,6 +88,29 @@ async def manage_animation(
             }
 
     unity_instance = get_unity_instance_from_context(ctx)
+
+    # Normalize properties to dict if needed
+    normalized_params, normalization_error = normalize_param_map(
+        {"properties": properties},
+        [rule_object("properties")],
+    )
+    if normalization_error:
+        return {"success": False, "message": normalization_error}
+    properties = normalized_params.get("properties") if normalized_params else None
+
+    # Apply parameter name aliases for controller actions
+    if properties is not None and isinstance(properties, dict):
+        action_lower = action_normalized.lower()
+        if action_lower == "controller_add_state":
+            # Map 'name' to 'stateName' if 'stateName' is not provided
+            if "name" in properties and "stateName" not in properties:
+                properties = dict(properties)
+                properties["stateName"] = properties.pop("name")
+        elif action_lower == "controller_add_parameter":
+            # Map 'name' to 'parameterName' if 'parameterName' is not provided
+            if "name" in properties and "parameterName" not in properties:
+                properties = dict(properties)
+                properties["parameterName"] = properties.pop("name")
 
     params_dict: dict[str, Any] = {"action": action_normalized}
     if properties is not None:

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
+import sys
 import time
-from typing import Any
+from collections.abc import Awaitable, Callable
+from functools import wraps
+from typing import Any, cast
 
 from models import MCPResponse
 
@@ -108,3 +112,62 @@ async def preflight(
     # Staleness: if the snapshot is stale, proceed (tools will still run), but callers that read resources can back off.
     # In future we may make this strict for some tools.
     return None
+
+
+def preflight_guard(
+    *,
+    requires_no_tests: bool = False,
+    wait_for_no_compile: bool = False,
+    refresh_if_dirty: bool = False,
+    max_wait_s: float = 30.0,
+    action_arg: str = "action",
+    skip_actions: set[str] | None = None,
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+    """
+    Declarative preflight decorator for tool handlers.
+
+    Example:
+        @preflight_guard(wait_for_no_compile=True, refresh_if_dirty=True)
+        async def manage_asset(ctx, action, ...): ...
+
+        @preflight_guard(wait_for_no_compile=True, refresh_if_dirty=True, skip_actions={"ping"})
+        async def manage_material(ctx, action, ...): ...
+    """
+    normalized_skip_actions = {a.lower() for a in (skip_actions or set())}
+
+    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        signature = inspect.signature(func)
+        parameter_names = list(signature.parameters.keys())
+        action_index = parameter_names.index(action_arg) if action_arg in signature.parameters else None
+
+        @wraps(func)
+        async def wrapped(*args: Any, **kwargs: Any) -> Any:
+            action_value: Any = kwargs.get(action_arg)
+            if action_value is None and action_index is not None and len(args) > action_index:
+                action_value = args[action_index]
+
+            should_skip = isinstance(action_value, str) and action_value.lower() in normalized_skip_actions
+            if not should_skip:
+                ctx = args[0] if args else kwargs.get("ctx")
+                module = sys.modules.get(func.__module__)
+                module_preflight = getattr(module, "preflight", None) if module is not None else None
+                preflight_callable: Callable[..., Awaitable[MCPResponse | None]]
+                if callable(module_preflight) and inspect.iscoroutinefunction(module_preflight):
+                    preflight_callable = cast(Callable[..., Awaitable[MCPResponse | None]], module_preflight)
+                else:
+                    preflight_callable = preflight
+                gate = await preflight_callable(
+                    ctx,
+                    requires_no_tests=requires_no_tests,
+                    wait_for_no_compile=wait_for_no_compile,
+                    refresh_if_dirty=refresh_if_dirty,
+                    max_wait_s=max_wait_s,
+                )
+                if gate is not None:
+                    return gate.model_dump() if hasattr(gate, "model_dump") else gate
+
+            return await func(*args, **kwargs)
+
+        return wrapped
+
+    return decorator

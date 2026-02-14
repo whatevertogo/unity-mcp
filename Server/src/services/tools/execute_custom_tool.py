@@ -9,6 +9,7 @@ from services.custom_tool_service import (
 )
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.utils import normalize_object
 
 
 @mcp_for_unity_tool(
@@ -20,7 +21,7 @@ from services.tools import get_unity_instance_from_context
         destructiveHint=True,
     ),
 )
-async def execute_custom_tool(ctx: Context, tool_name: str, parameters: dict | None = None) -> MCPResponse:
+async def execute_custom_tool(ctx: Context, tool_name: str, parameters: dict | str | None = None) -> MCPResponse:
     unity_instance = get_unity_instance_from_context(ctx)
     if not unity_instance:
         return MCPResponse(
@@ -35,7 +36,18 @@ async def execute_custom_tool(ctx: Context, tool_name: str, parameters: dict | N
             message=f"Could not resolve project id for {unity_instance}. Ensure Unity is running and reachable.",
         )
 
-    if not isinstance(parameters, dict):
+    # Normalize parameters: None -> {}, parse JSON string if needed
+    if parameters is None:
+        parameters = {}
+    else:
+        parameters, parse_error = normalize_object(parameters, "parameters")
+        if parse_error:
+            return MCPResponse(
+                success=False,
+                message=f"parameters must be an object/dictionary. {parse_error}",
+            )
+
+    if parameters is None or not isinstance(parameters, dict):
         return MCPResponse(
             success=False,
             message="parameters must be an object/dictionary",

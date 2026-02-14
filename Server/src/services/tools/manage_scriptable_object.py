@@ -17,7 +17,12 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import coerce_bool, parse_json_payload
+from services.tools.utils import (
+    normalize_param_map,
+    rule_bool,
+    rule_json_list,
+    rule_object,
+)
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -53,26 +58,31 @@ async def manage_scriptable_object(
 ) -> dict[str, Any]:
     unity_instance = get_unity_instance_from_context(ctx)
 
-    # Tolerate JSON-string payloads (LLMs sometimes stringify complex objects)
-    parsed_target = parse_json_payload(target)
-    parsed_patches = parse_json_payload(patches)
-
-    if parsed_target is not None and not isinstance(parsed_target, dict):
-        return {"success": False, "message": "manage_scriptable_object: 'target' must be an object {guid|path} (or JSON string of such)."}
-
-    if parsed_patches is not None and not isinstance(parsed_patches, list):
-        return {"success": False, "message": "manage_scriptable_object: 'patches' must be a list (or JSON string of a list)."}
+    normalized_params, normalization_error = normalize_param_map(
+        {
+            "target": target,
+            "patches": patches,
+            "overwrite": overwrite,
+            "dry_run": dry_run,
+        },
+        [
+            rule_object("target"),
+            rule_json_list("patches"),
+            rule_bool("overwrite"),
+            rule_bool("dry_run", output_key="dryRun"),
+        ],
+    )
+    if normalization_error:
+        return {"success": False, "message": f"manage_scriptable_object: {normalization_error}"}
 
     params: dict[str, Any] = {
         "action": action,
         "typeName": type_name,
         "folderPath": folder_path,
         "assetName": asset_name,
-        "overwrite": coerce_bool(overwrite, default=None),
-        "target": parsed_target,
-        "patches": parsed_patches,
-        "dryRun": coerce_bool(dry_run, default=None),
     }
+    if normalized_params:
+        params.update(normalized_params)
 
     # Remove None values to keep Unity handler simpler
     params = {k: v for k, v in params.items() if v is not None}

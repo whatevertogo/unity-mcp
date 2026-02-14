@@ -5,10 +5,15 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import coerce_bool, normalize_vector3
+from services.tools.utils import (
+    normalize_object_or_list,
+    normalize_param_map,
+    rule_bool,
+    rule_vector3,
+)
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.preflight import preflight
+from services.tools.preflight import preflight, preflight_guard
 
 
 # Required parameters for each action
@@ -36,6 +41,7 @@ REQUIRED_PARAMS = {
         destructiveHint=True,
     ),
 )
+@preflight_guard(wait_for_no_compile=True, refresh_if_dirty=True)
 async def manage_prefabs(
     ctx: Context,
     action: Annotated[
@@ -63,7 +69,7 @@ async def manage_prefabs(
     parent: Annotated[str, "New parent object name/path within prefab for modify_contents."] | None = None,
     components_to_add: Annotated[list[str], "Component types to add in modify_contents."] | None = None,
     components_to_remove: Annotated[list[str], "Component types to remove in modify_contents."] | None = None,
-    create_child: Annotated[dict[str, Any] | list[dict[str, Any]], "Create child GameObject(s) in the prefab. Single object or array of objects, each with: name (required), parent (optional, defaults to target), primitive_type (optional: Cube, Sphere, Capsule, Cylinder, Plane, Quad), position, rotation, scale, components_to_add, tag, layer, set_active."] | None = None,
+    create_child: Annotated[dict[str, Any] | list[dict[str, Any]] | str, "Create child GameObject(s) in the prefab. Single object or array of objects, each with: name (required), parent (optional, defaults to target), primitive_type (optional: Cube, Sphere, Capsule, Cylinder, Plane, Quad), position, rotation, scale, components_to_add, tag, layer, set_active."] | None = None,
 ) -> dict[str, Any]:
     # Back-compat: map 'name' → 'target' for create_from_gameobject (Unity accepts both)
     if action == "create_from_gameobject" and target is None and name is not None:
@@ -83,18 +89,30 @@ async def manage_prefabs(
 
     unity_instance = get_unity_instance_from_context(ctx)
 
-    # Preflight check for operations to ensure Unity is ready
     try:
-        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-        if gate is not None:
-            return gate.model_dump()
-    except Exception as exc:
-        return {
-            "success": False,
-            "message": f"Unity preflight check failed: {exc}"
-        }
+        normalized_params, normalization_error = normalize_param_map(
+            {
+                "allow_overwrite": allow_overwrite,
+                "search_inactive": search_inactive,
+                "unlink_if_instance": unlink_if_instance,
+                "position": position,
+                "rotation": rotation,
+                "scale": scale,
+                "set_active": set_active,
+            },
+            [
+                rule_bool("allow_overwrite", output_key="allowOverwrite"),
+                rule_bool("search_inactive", output_key="searchInactive"),
+                rule_bool("unlink_if_instance", output_key="unlinkIfInstance"),
+                rule_vector3("position"),
+                rule_vector3("rotation"),
+                rule_vector3("scale"),
+                rule_bool("set_active", output_key="setActive"),
+            ],
+        )
+        if normalization_error:
+            return {"success": False, "message": normalization_error}
 
-    try:
         # Build parameters dictionary
         params: dict[str, Any] = {"action": action}
 
@@ -105,43 +123,16 @@ async def manage_prefabs(
         if target:
             params["target"] = target
 
-        allow_overwrite_val = coerce_bool(allow_overwrite)
-        if allow_overwrite_val is not None:
-            params["allowOverwrite"] = allow_overwrite_val
-
-        search_inactive_val = coerce_bool(search_inactive)
-        if search_inactive_val is not None:
-            params["searchInactive"] = search_inactive_val
-
-        unlink_if_instance_val = coerce_bool(unlink_if_instance)
-        if unlink_if_instance_val is not None:
-            params["unlinkIfInstance"] = unlink_if_instance_val
+        if normalized_params:
+            params.update(normalized_params)
 
         # modify_contents parameters
-        if position is not None:
-            position_value, position_error = normalize_vector3(position, "position")
-            if position_error:
-                return {"success": False, "message": position_error}
-            params["position"] = position_value
-        if rotation is not None:
-            rotation_value, rotation_error = normalize_vector3(rotation, "rotation")
-            if rotation_error:
-                return {"success": False, "message": rotation_error}
-            params["rotation"] = rotation_value
-        if scale is not None:
-            scale_value, scale_error = normalize_vector3(scale, "scale")
-            if scale_error:
-                return {"success": False, "message": scale_error}
-            params["scale"] = scale_value
         if name is not None:
             params["name"] = name
         if tag is not None:
             params["tag"] = tag
         if layer is not None:
             params["layer"] = layer
-        set_active_val = coerce_bool(set_active)
-        if set_active_val is not None:
-            params["setActive"] = set_active_val
         if parent is not None:
             params["parent"] = parent
         if components_to_add is not None:
@@ -149,18 +140,31 @@ async def manage_prefabs(
         if components_to_remove is not None:
             params["componentsToRemove"] = components_to_remove
         if create_child is not None:
+            create_child, create_child_error = normalize_object_or_list(
+                create_child,
+                "create_child",
+            )
+            if create_child_error:
+                return {"success": False, "message": create_child_error}
+
             # Normalize vector fields within create_child (handles single object or array)
             def normalize_child_params(child: Any, index: int | None = None) -> tuple[dict | None, str | None]:
                 prefix = f"create_child[{index}]" if index is not None else "create_child"
                 if not isinstance(child, dict):
                     return None, f"{prefix} must be a dict with child properties (name, primitive_type, position, etc.), got {type(child).__name__}"
                 child_params = dict(child)
-                for vec_field in ("position", "rotation", "scale"):
-                    if vec_field in child_params and child_params[vec_field] is not None:
-                        vec_val, vec_err = normalize_vector3(child_params[vec_field], f"{prefix}.{vec_field}")
-                        if vec_err:
-                            return None, vec_err
-                        child_params[vec_field] = vec_val
+                vec_params, vec_error = normalize_param_map(
+                    child_params,
+                    [
+                        rule_vector3("position", param_name=f"{prefix}.position"),
+                        rule_vector3("rotation", param_name=f"{prefix}.rotation"),
+                        rule_vector3("scale", param_name=f"{prefix}.scale"),
+                    ],
+                )
+                if vec_error:
+                    return None, vec_error
+                if vec_params:
+                    child_params.update(vec_params)
                 return child_params, None
 
             if isinstance(create_child, list):

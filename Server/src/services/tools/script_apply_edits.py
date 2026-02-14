@@ -8,7 +8,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import parse_json_payload
+from services.tools.utils import normalize_json_list, normalize_object
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -731,8 +731,8 @@ async def script_apply_edits(
     name: Annotated[str, "Name of the script to edit"],
     path: Annotated[str, "Path to the script to edit under Assets/ directory"],
     edits: Annotated[Union[list[dict[str, Any]], str], "List of edits to apply to the script (JSON list or stringified JSON)"],
-    options: Annotated[dict[str, Any],
-                       "Options for the script edit"] | None = None,
+    options: Annotated[dict[str, Any] | str,
+                       "Options for the script edit. Valid keys: validate (standard/relaxed), refresh (immediate/debounced), applyMode (atomic/sequential), preview (true/false), confirm (true/false)"] | None = None,
     script_type: Annotated[str,
                            "Type of the script to edit"] = "MonoBehaviour",
     namespace: Annotated[str,
@@ -743,9 +743,18 @@ async def script_apply_edits(
         f"Processing script_apply_edits: {name} (unity_instance={unity_instance or 'default'})")
 
     # Parse edits if they came as a stringified JSON
-    edits = parse_json_payload(edits)
+    edits, edits_error = normalize_json_list(edits, "edits")
+    if edits_error:
+        return {"success": False, "message": f"Edits must be a list or JSON string of a list. {edits_error}"}
     if not isinstance(edits, list):
         return {"success": False, "message": f"Edits must be a list or JSON string of a list, got {type(edits)}"}
+
+    # Normalize options to dict if it came as a stringified JSON
+    normalized_options: dict[str, Any] | None = None
+    if options is not None:
+        normalized_options, options_error = normalize_object(options, "options")
+        if options_error:
+            return {"success": False, "message": f"Options must be a dict or JSON object string. {options_error}"}
 
     # Normalize locator first so downstream calls target the correct script file.
     name, path = _normalize_script_locator(name, path)
@@ -953,7 +962,7 @@ async def script_apply_edits(
 
     # If everything is structured (method/class/anchor ops), forward directly to Unity's structured editor.
     if all_struct:
-        opts2 = dict(options or {})
+        opts2 = dict(normalized_options or {})
         # For structured edits, prefer immediate refresh to avoid missed reloads when Editor is unfocused
         opts2.setdefault("refresh", "immediate")
         params_struct: dict[str, Any] = {
@@ -996,7 +1005,7 @@ async def script_apply_edits(
         return {"success": False, "message": "No contents returned from Unity read."}
 
     # Optional preview/dry-run: apply locally and return diff without writing
-    preview = bool((options or {}).get("preview"))
+    preview = bool((normalized_options or {}).get("preview"))
 
     # If we have a mixed batch (TEXT + STRUCT), apply text first with precondition, then structured
     if mixed:
@@ -1103,7 +1112,7 @@ async def script_apply_edits(
                     "scriptType": script_type,
                     "edits": at_edits,
                     "precondition_sha256": sha,
-                    "options": {"refresh": (options or {}).get("refresh", "debounced"), "validate": (options or {}).get("validate", "standard"), "applyMode": ("atomic" if len(at_edits) > 1 else (options or {}).get("applyMode", "sequential"))}
+                    "options": {"refresh": (normalized_options or {}).get("refresh", "debounced"), "validate": (normalized_options or {}).get("validate", "standard"), "applyMode": ("atomic" if len(at_edits) > 1 else (normalized_options or {}).get("applyMode", "sequential"))}
                 }
                 resp_text = await send_with_unity_instance(
                     async_send_command_with_retry,
@@ -1118,7 +1127,7 @@ async def script_apply_edits(
             return _with_norm({"success": False, "message": f"Text edit conversion failed: {e}"}, normalized_for_echo, routing="mixed/text-first")
 
         if struct_edits:
-            opts2 = dict(options or {})
+            opts2 = dict(normalized_options or {})
             # Prefer debounced background refresh unless explicitly overridden
             opts2.setdefault("refresh", "debounced")
             params_struct: dict[str, Any] = {
@@ -1257,9 +1266,9 @@ async def script_apply_edits(
                 "edits": at_edits,
                 "precondition_sha256": sha,
                 "options": {
-                    "refresh": (options or {}).get("refresh", "debounced"),
-                    "validate": (options or {}).get("validate", "standard"),
-                    "applyMode": ("atomic" if len(at_edits) > 1 else (options or {}).get("applyMode", "sequential"))
+                    "refresh": (normalized_options or {}).get("refresh", "debounced"),
+                    "validate": (normalized_options or {}).get("validate", "standard"),
+                    "applyMode": ("atomic" if len(at_edits) > 1 else (normalized_options or {}).get("applyMode", "sequential"))
                 }
             }
             resp = await send_with_unity_instance(
@@ -1281,7 +1290,7 @@ async def script_apply_edits(
 
     # For regex_replace, honor preview consistently: if preview=true, always return diff without writing.
     # If confirm=false (default) and preview not requested, return diff and instruct confirm=true to apply.
-    if "regex_replace" in text_ops and (preview or not (options or {}).get("confirm")):
+    if "regex_replace" in text_ops and (preview or not (normalized_options or {}).get("confirm")):
         try:
             preview_text = _apply_edits_locally(contents, edits)
             import difflib
@@ -1322,7 +1331,7 @@ async def script_apply_edits(
 
     # 3) update to Unity
     # Default refresh/validate for natural usage on text path as well
-    options = dict(options or {})
+    options = dict(normalized_options or {})
     options.setdefault("validate", "standard")
     options.setdefault("refresh", "debounced")
 

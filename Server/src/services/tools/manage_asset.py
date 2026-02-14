@@ -2,7 +2,6 @@
 Defines the manage_asset tool for interacting with Unity assets.
 """
 import asyncio
-import json
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -10,10 +9,10 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import parse_json_payload, coerce_int, normalize_properties
+from services.tools.utils import normalize_param_map, rule_int, rule_object
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.preflight import preflight
+from services.tools.preflight import preflight, preflight_guard
 
 
 @mcp_for_unity_tool(
@@ -27,14 +26,15 @@ from services.tools.preflight import preflight
         destructiveHint=True,
     ),
 )
+@preflight_guard(wait_for_no_compile=True, refresh_if_dirty=True)
 async def manage_asset(
     ctx: Context,
     action: Annotated[Literal["import", "create", "modify", "delete", "duplicate", "move", "rename", "search", "get_info", "create_folder", "get_components"], "Perform CRUD operations on assets."],
     path: Annotated[str, "Asset path (e.g., 'Materials/MyMaterial.mat') or search scope (e.g., 'Assets')."],
     asset_type: Annotated[str,
                           "Asset type (e.g., 'Material', 'Folder') - required for 'create'. Note: For ScriptableObjects, use manage_scriptable_object."] | None = None,
-    properties: Annotated[dict[str, Any],
-                          "Dictionary of properties for 'create'/'modify'. Keys are property names, values are property values."] | None = None,
+    properties: Annotated[dict[str, Any] | str,
+                          "Dictionary of properties for 'create'/'modify'. Keys are property names, values are property values. Accepts JSON string."] | None = None,
     destination: Annotated[str,
                            "Target path for 'duplicate'/'move'."] | None = None,
     generate_preview: Annotated[bool,
@@ -53,20 +53,25 @@ async def manage_asset(
 ) -> dict[str, Any]:
     unity_instance = get_unity_instance_from_context(ctx)
 
-    # Best-effort guard: if Unity is compiling/reloading or known external changes are pending,
-    # wait/refresh to avoid stale reads and flaky timeouts.
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
+    normalized_params, normalization_error = normalize_param_map(
+        {
+            "properties": properties,
+            "page_size": page_size,
+            "page_number": page_number,
+        },
+        [
+            rule_object("properties"),
+            rule_int("page_size"),
+            rule_int("page_number"),
+        ],
+    )
+    if normalization_error:
+        await ctx.error(f"manage_asset: {normalization_error}")
+        return {"success": False, "message": normalization_error}
 
-    # --- Normalize properties using robust module-level helper ---
-    properties, parse_error = normalize_properties(properties)
-    if parse_error:
-        await ctx.error(f"manage_asset: {parse_error}")
-        return {"success": False, "message": parse_error}
-
-    page_size = coerce_int(page_size)
-    page_number = coerce_int(page_number)
+    properties = normalized_params.get("properties") if normalized_params else None
+    page_size = normalized_params.get("page_size") if normalized_params else None
+    page_number = normalized_params.get("page_number") if normalized_params else None
 
     # --- Payload-safe normalization for common LLM mistakes (search) ---
     # Unity's C# handler treats `path` as a folder scope. If a model mistakenly puts a query like

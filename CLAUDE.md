@@ -61,6 +61,16 @@ Each MCP tool does one thing well. Resist the urge to add "convenient" parameter
 ### 6. Use Resources for reading.
 Keep them smart and focused rather than "read everything" type resources. That way resources are quick and LLM-friendly. There are plenty of examples in the codebase to model on (gameobject, prefab, etc.)
 
+## Tool Parameter Normalization Policy (Python `services/tools`)
+
+### Core Normalization Functions
+
+Parameter normalization to support JSON is handled by `Server/src/services/tools/utils.py`. Use these functions to normalize complex parameters:
+
+### Preflight Guards
+
+Use `@preflight_guard(...)` decorator for Unity readiness checks:
+
 ## Key Patterns
 
 ### Parameter Handling (C#)
@@ -78,6 +88,10 @@ Use the `@handle_unity_errors` decorator:
 async def my_command(ctx, ...):
     result = await call_unity_tool(...)
 ```
+
+### Preflight Strategy (Python tools)
+Use `@preflight_guard(...)` from `services.tools.preflight` to declare readiness requirements at the decorator level.
+Avoid ad-hoc `gate = await preflight(...)` blocks in each tool unless a tool needs custom behavior not covered by the decorator.
 
 ### Paging Large Results
 Always page results that could be large (hierarchies, components, search results):

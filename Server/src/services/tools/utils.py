@@ -1,17 +1,271 @@
-"""Shared helper utilities for MCP server tools."""
+"""
+Shared helper utilities for MCP server tools.
+
+Architecture:
+    - Rule builders (rule_*): Create declarative normalization rules
+    - Core normalization (normalize_*): Type-specific normalization logic
+    - Utilities (_*): Internal helpers for implementation
+
+Normalization policy for tool authors:
+1. New/updated tools should normalize parameters through `normalize_param_map` + `rule_*`.
+2. For non-map payloads, use `normalize_object`, `normalize_json_list`, or `normalize_object_or_list`.
+3. Do not hand-roll placeholder checks (`[object Object]`, `undefined`) in tool files.
+4. `coerce_*` and `parse_json_payload` are legacy compatibility helpers. Prefer rule-based entrypoints.
+5. For async tools, consider using `@with_normalized_params` decorator to reduce boilerplate.
+"""
 
 from __future__ import annotations
 
 import json
 import math
-from typing import Any
+import warnings
+from dataclasses import dataclass
+from typing import Any, Callable, Mapping, Sequence
 
 _TRUTHY = {"true", "1", "yes", "on"}
 _FALSY = {"false", "0", "no", "off"}
+_INVALID_SERIALIZED_VALUES = {"[object Object]", "undefined", "null", ""}
+_INVALID_OBJECT_STRING_PLACEHOLDERS = {"[object Object]", "undefined"}
+Normalizer = Callable[[Any], tuple[Any, str | None]]
+
+_LEGACY_HELPER_WARNING = (
+    "{name} is a legacy compatibility helper. "
+    "Use normalize_param_map + rule_* (or normalize_object/normalize_json_list) in tool code."
+)
 
 
-def coerce_bool(value: Any, default: bool | None = None) -> bool | None:
+def _warn_legacy_helper(name: str) -> None:
+    warnings.warn(
+        _LEGACY_HELPER_WARNING.format(name=name),
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
+def is_invalid_serialized_value(value: Any) -> bool:
+    """Return True if the input is a known placeholder from broken client serialization."""
+    return isinstance(value, str) and value.strip() in _INVALID_SERIALIZED_VALUES
+
+
+def is_invalid_object_string_placeholder(value: Any) -> bool:
+    """Return True for object-placeholder strings commonly produced by broken serialization."""
+    return isinstance(value, str) and value.strip() in _INVALID_OBJECT_STRING_PLACEHOLDERS
+
+@dataclass(frozen=True, slots=True)
+class ParamRule:
+    """Declarative normalization rule for a single tool parameter."""
+    input_key: str
+    normalizer: Normalizer
+    output_key: str | None = None
+    include_none: bool = False
+
+
+def rule_vector3(input_key: str, output_key: str | None = None, param_name: str | None = None) -> ParamRule:
+    """Create a vector3 normalization rule."""
+    label = param_name or input_key
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: normalize_vector3(value, label),
+        output_key=output_key,
+    )
+
+
+def rule_string_list(input_key: str, output_key: str | None = None, param_name: str | None = None) -> ParamRule:
+    """Create a string list normalization rule."""
+    label = param_name or input_key
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: normalize_string_list(value, label),
+        output_key=output_key,
+    )
+
+
+def rule_object(input_key: str, output_key: str | None = None, param_name: str | None = None) -> ParamRule:
+    """Create a dict/json-object normalization rule."""
+    label = param_name or input_key
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: normalize_object(value, label),
+        output_key=output_key,
+    )
+
+
+def rule_bool(
+    input_key: str,
+    output_key: str | None = None,
+    default: bool | None = None,
+    include_none: bool = False,
+) -> ParamRule:
+    """Create a bool coercion rule."""
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: (coerce_bool(value, default=default, _warn_legacy=False), None),
+        output_key=output_key,
+        include_none=include_none,
+    )
+
+
+def rule_int(
+    input_key: str,
+    output_key: str | None = None,
+    default: int | None = None,
+    include_none: bool = False,
+) -> ParamRule:
+    """Create an int coercion rule."""
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: (coerce_int(value, default=default, _warn_legacy=False), None),
+        output_key=output_key,
+        include_none=include_none,
+    )
+
+
+def rule_float(
+    input_key: str,
+    output_key: str | None = None,
+    default: float | None = None,
+    include_none: bool = False,
+) -> ParamRule:
+    """Create a float coercion rule."""
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: (coerce_float(value, default=default, _warn_legacy=False), None),
+        output_key=output_key,
+        include_none=include_none,
+    )
+
+
+def rule_json_list(input_key: str, output_key: str | None = None, param_name: str | None = None) -> ParamRule:
+    """Create a JSON-list normalization rule."""
+    label = param_name or input_key
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: normalize_json_list(value, label),
+        output_key=output_key,
+    )
+
+
+def rule_json_value(
+    input_key: str,
+    output_key: str | None = None,
+    param_name: str | None = None,
+    reject_invalid_placeholder: bool = True,
+) -> ParamRule:
+    """Create a tolerant JSON value parsing rule."""
+    label = param_name or input_key
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: normalize_json_value(
+            value,
+            label,
+            reject_invalid_placeholder=reject_invalid_placeholder,
+        ),
+        output_key=output_key,
+    )
+
+
+def rule_non_placeholder_string(
+    input_key: str,
+    output_key: str | None = None,
+    param_name: str | None = None,
+    allow_non_string: bool = True,
+) -> ParamRule:
+    """Create a rule that rejects placeholder strings while keeping other values."""
+    label = param_name or input_key
+    return ParamRule(
+        input_key=input_key,
+        normalizer=lambda value: normalize_non_placeholder_string(
+            value,
+            label,
+            allow_non_string=allow_non_string,
+        ),
+        output_key=output_key,
+    )
+
+
+def normalize_param_map(
+    values: Mapping[str, Any],
+    rules: Sequence[ParamRule],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """
+    Apply a list of normalization rules to a parameter map.
+
+    Returns:
+        (normalized_map, error_message)
+    """
+    normalized: dict[str, Any] = {}
+    for rule in rules:
+        input_value = values.get(rule.input_key)
+        coerced, error = rule.normalizer(input_value)
+        if error:
+            return None, error
+
+        if coerced is None and not rule.include_none:
+            continue
+
+        normalized[rule.output_key or rule.input_key] = coerced
+    return normalized, None
+
+
+def _extract_param_dict(func: Callable, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Extract parameter names and values from function call."""
+    import inspect
+    sig = inspect.signature(func)
+    bound = sig.bind_partial(*args, **kwargs)
+    bound.apply_defaults()
+    return dict(bound.arguments)
+
+
+def with_normalized_params(
+    *rules: ParamRule,
+    error_response_key: str = "success",
+    error_message_key: str = "message",
+) -> Callable:
+    """
+    Decorator that normalizes parameters using rules and returns early on error.
+
+    Usage:
+        @with_normalized_params(
+            rule_bool("save_as_prefab", output_key="saveAsPrefab"),
+            rule_vector3("position"),
+        )
+        async def manage_asset(ctx, action, save_as_prefab=None, position=None, ...):
+            # saveAsPrefab and position are now normalized
+            ...
+
+    The decorator injects normalized values back into the function's kwargs.
+    If normalization fails, returns an error dict immediately.
+    """
+    from functools import wraps
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            # Extract all parameters
+            param_dict = _extract_param_dict(func, *args, **kwargs)
+
+            # Apply normalization rules
+            normalized, error = normalize_param_map(param_dict, rules)
+            if error:
+                return {error_response_key: False, error_message_key: error}
+
+            # Update kwargs with normalized values
+            kwargs.update(normalized)
+
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def coerce_bool(
+    value: Any,
+    default: bool | None = None,
+    *,
+    _warn_legacy: bool = True,
+) -> bool | None:
     """Attempt to coerce a loosely-typed value to a boolean."""
+    if _warn_legacy:
+        _warn_legacy_helper("coerce_bool")
     if value is None:
         return default
     if isinstance(value, bool):
@@ -26,7 +280,7 @@ def coerce_bool(value: Any, default: bool | None = None) -> bool | None:
     return bool(value)
 
 
-def parse_json_payload(value: Any) -> Any:
+def parse_json_payload(value: Any, *, _warn_legacy: bool = True) -> Any:
     """
     Attempt to parse a value that might be a JSON string into its native object.
 
@@ -41,6 +295,9 @@ def parse_json_payload(value: Any) -> Any:
         The parsed JSON object/list if the input was a valid JSON string,
         or the original value if parsing failed or wasn't necessary.
     """
+    if _warn_legacy:
+        _warn_legacy_helper("parse_json_payload")
+
     if not isinstance(value, str):
         return value
 
@@ -62,8 +319,15 @@ def parse_json_payload(value: Any) -> Any:
         return value
 
 
-def coerce_int(value: Any, default: int | None = None) -> int | None:
+def coerce_int(
+    value: Any,
+    default: int | None = None,
+    *,
+    _warn_legacy: bool = True,
+) -> int | None:
     """Attempt to coerce a loosely-typed value to an integer."""
+    if _warn_legacy:
+        _warn_legacy_helper("coerce_int")
     if value is None:
         return default
     try:
@@ -79,8 +343,15 @@ def coerce_int(value: Any, default: int | None = None) -> int | None:
         return default
 
 
-def coerce_float(value: Any, default: float | None = None) -> float | None:
+def coerce_float(
+    value: Any,
+    default: float | None = None,
+    *,
+    _warn_legacy: bool = True,
+) -> float | None:
     """Attempt to coerce a loosely-typed value to a float-like number."""
+    if _warn_legacy:
+        _warn_legacy_helper("coerce_float")
     if value is None:
         return default
     try:
@@ -110,26 +381,158 @@ def normalize_properties(value: Any) -> tuple[dict[str, Any] | None, str | None]
     Returns:
         Tuple of (parsed_dict, error_message). If error_message is set, parsed_dict is None.
     """
+    return normalize_object(value, "properties")
+
+
+def normalize_object(value: Any, param_name: str = "object") -> tuple[dict[str, Any] | None, str | None]:
+    """
+    Robustly normalize a dict-like parameter from native dict or JSON object string.
+
+    Returns:
+        Tuple of (parsed_dict, error_message). If error_message is set, parsed_dict is None.
+    """
     if value is None:
         return None, None
 
-    # Already a dict - return as-is
     if isinstance(value, dict):
         return value, None
 
-    # Try parsing as string
     if isinstance(value, str):
-        # Check for obviously invalid values from serialization bugs
-        if value in ("[object Object]", "undefined", "null", ""):
-            return None, f"properties received invalid value: '{value}'. Expected a JSON object like {{\"key\": value}}"
+        if is_invalid_serialized_value(value):
+            return None, (
+                f"{param_name} received invalid value: '{value}'. "
+                "Expected a JSON object like {\"key\": value}"
+            )
 
-        parsed = parse_json_payload(value)
+        parsed = parse_json_payload(value, _warn_legacy=False)
         if isinstance(parsed, dict):
             return parsed, None
 
-        return None, f"properties must be a JSON object (dict), got string that parsed to {type(parsed).__name__}"
+        return None, (
+            f"{param_name} must be a JSON object (dict), "
+            f"got string that parsed to {type(parsed).__name__}"
+        )
 
-    return None, f"properties must be a dict or JSON string, got {type(value).__name__}"
+    return None, f"{param_name} must be a dict or JSON string, got {type(value).__name__}"
+
+
+def normalize_json_list(value: Any, param_name: str = "list") -> tuple[list[Any] | None, str | None]:
+    """
+    Normalize a list-like parameter from native list/tuple or JSON array string.
+
+    Returns:
+        Tuple of (parsed_list, error_message). If error_message is set, parsed_list is None.
+    """
+    if value is None:
+        return None, None
+
+    if isinstance(value, list):
+        return value, None
+
+    if isinstance(value, tuple):
+        return list(value), None
+
+    if isinstance(value, str):
+        if is_invalid_serialized_value(value):
+            return None, (
+                f"{param_name} received invalid value: '{value}'. "
+                "Expected a JSON array like [\"item1\", \"item2\"]"
+            )
+
+        parsed = parse_json_payload(value, _warn_legacy=False)
+        if isinstance(parsed, list):
+            return parsed, None
+
+        return None, (
+            f"{param_name} must be a JSON array (list), "
+            f"got string that parsed to {type(parsed).__name__}"
+        )
+
+    return None, f"{param_name} must be a list or JSON string, got {type(value).__name__}"
+
+
+def normalize_object_or_list(
+    value: Any,
+    param_name: str = "value",
+) -> tuple[dict[str, Any] | list[Any] | None, str | None]:
+    """
+    Normalize a parameter that must be either an object or an array.
+
+    Returns:
+        Tuple of (parsed_value, error_message). If error_message is set, parsed_value is None.
+    """
+    if value is None:
+        return None, None
+
+    if isinstance(value, dict):
+        return value, None
+
+    if isinstance(value, list):
+        return value, None
+
+    if isinstance(value, tuple):
+        return list(value), None
+
+    if isinstance(value, str):
+        if is_invalid_serialized_value(value):
+            return None, (
+                f"{param_name} received invalid value: '{value}'. "
+                "Expected a JSON object or JSON array"
+            )
+        parsed = parse_json_payload(value, _warn_legacy=False)
+        if isinstance(parsed, (dict, list)):
+            return parsed, None
+
+        return None, (
+            f"{param_name} must be a JSON object or JSON array, "
+            f"got string that parsed to {type(parsed).__name__}"
+        )
+
+    return None, f"{param_name} must be a dict/list or JSON string, got {type(value).__name__}"
+
+
+def normalize_json_value(
+    value: Any,
+    param_name: str = "value",
+    *,
+    reject_invalid_placeholder: bool = True,
+) -> tuple[Any, str | None]:
+    """
+    Parse string input as JSON when possible, leaving non-string values unchanged.
+
+    Returns:
+        Tuple of (parsed_value, error_message).
+    """
+    if value is None:
+        return None, None
+
+    if isinstance(value, str):
+        if reject_invalid_placeholder and is_invalid_object_string_placeholder(value):
+            return None, f"{param_name} received invalid input: '{value}'"
+        return parse_json_payload(value, _warn_legacy=False), None
+
+    return value, None
+
+
+def normalize_non_placeholder_string(
+    value: Any,
+    param_name: str = "value",
+    *,
+    allow_non_string: bool = True,
+) -> tuple[Any, str | None]:
+    """Reject placeholder strings while preserving valid strings or non-string values."""
+    if value is None:
+        return None, None
+
+    if isinstance(value, str):
+        if is_invalid_object_string_placeholder(value):
+            return None, f"{param_name} received invalid input: '{value}'"
+        return value, None
+
+    if allow_non_string:
+        return value, None
+
+    return None, f"{param_name} must be a string, got {type(value).__name__}"
 
 
 def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[float] | None, str | None]:
@@ -174,10 +577,10 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
     # Try parsing as string
     if isinstance(value, str):
         # Check for obviously invalid values
-        if value in ("[object Object]", "undefined", "null", ""):
+        if is_invalid_serialized_value(value):
             return None, f"{param_name} received invalid value: '{value}'. Expected [x, y, z] array or {{x, y, z}} object"
 
-        parsed = parse_json_payload(value)
+        parsed = parse_json_payload(value, _warn_legacy=False)
 
         # Handle parsed dict
         if isinstance(parsed, dict):
@@ -239,13 +642,13 @@ def normalize_string_list(value: Any, param_name: str = "list") -> tuple[list[st
     if isinstance(value, str):
         val_trimmed = value.strip()
         # Check for obviously invalid values
-        if val_trimmed in ("[object Object]", "undefined", "null", ""):
+        if is_invalid_serialized_value(val_trimmed):
             return None, f"{param_name} received invalid value: '{value}'. Expected a JSON array like [\"item1\", \"item2\"]"
 
         # Check if it looks like a JSON array but will fail to parse
         looks_like_json_array = (val_trimmed.startswith("[") and val_trimmed.endswith("]"))
 
-        parsed = parse_json_payload(value)
+        parsed = parse_json_payload(value, _warn_legacy=False)
         # If parsing succeeded and result is a list, validate and return
         if isinstance(parsed, list):
             # Validate all elements are strings
@@ -264,6 +667,114 @@ def normalize_string_list(value: Any, param_name: str = "list") -> tuple[list[st
         return None, f"{param_name} must be a JSON array (list), got string that parsed to {type(parsed).__name__}"
 
     return None, f"{param_name} must be a list or JSON string, got {type(value).__name__}"
+
+
+def _add_alpha_if_needed(color: list[float], output_range: str) -> list[float]:
+    """Add alpha channel if color has only 3 components."""
+    if len(color) == 3:
+        alpha = 1.0 if output_range == "float" else 255
+        color.append(alpha)
+    return color
+
+
+def _convert_color_range(components: list[float] | list[int], output_range: str, from_hex: bool = False) -> list:
+    """Convert color components to the requested output range."""
+    # Convert int components to float for consistent handling
+    if isinstance(components[0], int):
+        components = [float(c) for c in components]
+
+    if output_range == "int":
+        if from_hex:
+            return [int(c) for c in components]
+        if all(0 <= c <= 1 for c in components):
+            return [int(round(c * 255)) for c in components]
+        return [int(c) for c in components]
+    else:
+        if from_hex:
+            return [c / 255.0 for c in components]
+        if any(c > 1 for c in components):
+            return [c / 255.0 for c in components]
+        return [float(c) for c in components]
+
+
+def _parse_hex_color(hex_str: str, output_range: str) -> tuple[list[float] | None, str | None]:
+    """Parse hex color string like #RGB, #RRGGBB, #RRGGBBAA."""
+    h = hex_str.lstrip("#")
+    try:
+        if len(h) == 3:
+            components = [int(c + c, 16) for c in h] + [255]
+            return _convert_color_range(components, output_range, from_hex=True), None
+        elif len(h) == 6:
+            components = [int(h[i:i+2], 16) for i in (0, 2, 4)] + [255]
+            return _convert_color_range(components, output_range, from_hex=True), None
+        elif len(h) == 8:
+            components = [int(h[i:i+2], 16) for i in (0, 2, 4, 6)]
+            return _convert_color_range(components, output_range, from_hex=True), None
+        return None, f"Invalid hex color length: {hex_str}"
+    except ValueError:
+        return None, f"Invalid hex color: {hex_str}"
+
+
+def _parse_color_dict(value: dict, output_range: str) -> tuple[list[float] | None, str | None]:
+    """Parse color from dict with r, g, b keys."""
+    if not all(k in value for k in ("r", "g", "b")):
+        return None, f"color dict must have 'r', 'g', 'b' keys, got {list(value.keys())}"
+
+    try:
+        color = [float(value["r"]), float(value["g"]), float(value["b"])]
+        if "a" in value:
+            color.append(float(value["a"]))
+        color = _add_alpha_if_needed(color, output_range)
+        return _convert_color_range(color, output_range), None
+    except (ValueError, TypeError, KeyError):
+        return None, f"color dict values must be numbers, got {value}"
+
+
+def _parse_color_list(value: list | tuple, output_range: str) -> tuple[list[float] | None, str | None]:
+    """Parse color from list/tuple with 3 or 4 components."""
+    if len(value) not in (3, 4):
+        return None, f"color must have 3 or 4 components, got {len(value)}"
+
+    try:
+        color = [float(c) for c in value]
+        color = _add_alpha_if_needed(color, output_range)
+        return _convert_color_range(color, output_range), None
+    except (ValueError, TypeError):
+        return None, f"color values must be numbers, got {value}"
+
+
+def _parse_color_string(value: str, output_range: str) -> tuple[list[float] | None, str | None]:
+    """Parse color from string (hex, JSON, or tuple-style)."""
+    if is_invalid_serialized_value(value):
+        return None, f"color received invalid value: '{value}'. Expected [r, g, b, a] or {{r, g, b, a}}"
+
+    # Handle hex colors
+    if value.startswith("#"):
+        return _parse_hex_color(value, output_range)
+
+    # Try parsing as JSON
+    parsed = parse_json_payload(value, _warn_legacy=False)
+
+    if isinstance(parsed, dict):
+        return _parse_color_dict(parsed, output_range)
+
+    if isinstance(parsed, (list, tuple)) and len(parsed) in (3, 4):
+        return _parse_color_list(parsed, output_range)
+
+    # Handle tuple-style strings "(r, g, b)" or "(r, g, b, a)"
+    s = value.strip()
+    if (s.startswith("[") and s.endswith("]")) or (s.startswith("(") and s.endswith(")")):
+        s = s[1:-1]
+    parts = [p.strip() for p in s.split(",")]
+    if len(parts) in (3, 4):
+        try:
+            color = [float(p) for p in parts]
+            color = _add_alpha_if_needed(color, output_range)
+            return _convert_color_range(color, output_range), None
+        except (ValueError, TypeError):
+            pass
+
+    return None, f"Failed to parse color string: {value}"
 
 
 def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float] | None, str | None]:
@@ -287,116 +798,13 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
     if value is None:
         return None, None
 
-    def _to_output_range(components: list[float], from_hex: bool = False) -> list:
-        """Convert color components to the requested output range."""
-        if output_range == "int":
-            if from_hex:
-                # Already 0-255 from hex parsing
-                return [int(c) for c in components]
-            # Check if input is normalized (0-1) or already 0-255
-            if all(0 <= c <= 1 for c in components):
-                return [int(round(c * 255)) for c in components]
-            return [int(c) for c in components]
-        else:  # float
-            if from_hex:
-                # Convert 0-255 to 0-1
-                return [c / 255.0 for c in components]
-            if any(c > 1 for c in components):
-                return [c / 255.0 for c in components]
-            return [float(c) for c in components]
-
-    # Handle dict with r/g/b keys
     if isinstance(value, dict):
-        if all(k in value for k in ("r", "g", "b")):
-            try:
-                color = [float(value["r"]), float(value["g"]), float(value["b"])]
-                if "a" in value:
-                    color.append(float(value["a"]))
-                else:
-                    if output_range == "int" and all(0 <= c <= 1 for c in color):
-                        color.append(1.0)
-                    else:
-                        color.append(1.0 if output_range == "float" else 255)
-                return _to_output_range(color), None
-            except (ValueError, TypeError, KeyError):
-                return None, f"color dict values must be numbers, got {value}"
-        return None, f"color dict must have 'r', 'g', 'b' keys, got {list(value.keys())}"
+        return _parse_color_dict(value, output_range)
 
-    # Already a list/tuple - validate
     if isinstance(value, (list, tuple)):
-        if len(value) in (3, 4):
-            try:
-                color = [float(c) for c in value]
-                if len(color) == 3:
-                    if output_range == "int" and all(0 <= c <= 1 for c in color):
-                        color.append(1.0)
-                    else:
-                        color.append(1.0 if output_range == "float" else 255)
-                return _to_output_range(color), None
-            except (ValueError, TypeError):
-                return None, f"color values must be numbers, got {value}"
-        return None, f"color must have 3 or 4 components, got {len(value)}"
+        return _parse_color_list(value, output_range)
 
-    # Try parsing as string
     if isinstance(value, str):
-        if value in ("[object Object]", "undefined", "null", ""):
-            return None, f"color received invalid value: '{value}'. Expected [r, g, b, a] or {{r, g, b, a}}"
-
-        # Handle hex colors
-        if value.startswith("#"):
-            h = value.lstrip("#")
-            try:
-                if len(h) == 3:
-                    # Short form #RGB -> expand to #RRGGBB
-                    components = [int(c + c, 16) for c in h] + [255]
-                    return _to_output_range(components, from_hex=True), None
-                elif len(h) == 6:
-                    components = [int(h[i:i+2], 16) for i in (0, 2, 4)] + [255]
-                    return _to_output_range(components, from_hex=True), None
-                elif len(h) == 8:
-                    components = [int(h[i:i+2], 16) for i in (0, 2, 4, 6)]
-                    return _to_output_range(components, from_hex=True), None
-            except ValueError:
-                return None, f"Invalid hex color: {value}"
-            return None, f"Invalid hex color length: {value}"
-
-        # Try parsing as JSON
-        parsed = parse_json_payload(value)
-
-        # Handle parsed dict
-        if isinstance(parsed, dict):
-            return normalize_color(parsed, output_range)
-
-        # Handle parsed list
-        if isinstance(parsed, (list, tuple)) and len(parsed) in (3, 4):
-            try:
-                color = [float(c) for c in parsed]
-                if len(color) == 3:
-                    if output_range == "int" and all(0 <= c <= 1 for c in color):
-                        color.append(1.0)
-                    else:
-                        color.append(1.0 if output_range == "float" else 255)
-                return _to_output_range(color), None
-            except (ValueError, TypeError):
-                return None, f"color values must be numbers, got {parsed}"
-
-        # Handle tuple-style strings "(r, g, b)" or "(r, g, b, a)"
-        s = value.strip()
-        if (s.startswith("[") and s.endswith("]")) or (s.startswith("(") and s.endswith(")")):
-            s = s[1:-1]
-        parts = [p.strip() for p in s.split(",")]
-        if len(parts) in (3, 4):
-            try:
-                color = [float(p) for p in parts]
-                if len(color) == 3:
-                    if output_range == "int" and all(0 <= c <= 1 for c in color):
-                        color.append(1.0)
-                    else:
-                        color.append(1.0 if output_range == "float" else 255)
-                return _to_output_range(color), None
-            except (ValueError, TypeError):
-                pass  # Fall through to error message
-
-        return None, f"Failed to parse color string: {value}"
+        return _parse_color_string(value, output_range)
 
     return None, f"color must be a list, dict, hex string, or JSON string, got {type(value).__name__}"
