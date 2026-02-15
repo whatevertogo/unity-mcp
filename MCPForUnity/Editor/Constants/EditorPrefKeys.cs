@@ -66,5 +66,8 @@ namespace MCPForUnity.Editor.Constants
         internal const string ApiKey = "MCPForUnity.ApiKey";
 
         internal const string BatchExecuteMaxCommands = "MCPForUnity.BatchExecute.MaxCommands";
+        internal const string BatchExecuteKeyCollisionBehavior = "MCPForUnity.BatchExecute.KeyCollisionBehavior";
+        internal const string BatchExecuteTelemetryEmitInterval = "MCPForUnity.BatchExecute.TelemetryEmitInterval";
+        internal const string BatchExecuteTelemetrySampleRate = "MCPForUnity.BatchExecute.TelemetrySampleRate";
     }
 }

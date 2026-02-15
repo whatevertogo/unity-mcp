@@ -11,6 +11,21 @@ using UnityEditor;
 namespace MCPForUnity.Editor.Tools
 {
     /// <summary>
+    /// Behavior to apply when key name collision is detected during parameter normalization.
+    /// </summary>
+    internal enum KeyCollisionBehavior
+    {
+        /// <summary>Log a warning and keep the first value encountered.</summary>
+        Warn,
+
+        /// <summary>Log an error and keep the first value encountered.</summary>
+        Error,
+
+        /// <summary>Throw an exception when a collision occurs.</summary>
+        Throw,
+    }
+
+    /// <summary>
     /// Executes multiple MCP commands within a single Unity-side handler. Commands are executed sequentially
     /// on the main thread to preserve determinism and Unity API safety.
     /// </summary>
@@ -23,6 +38,12 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>Hard ceiling to prevent extreme editor freezes regardless of user setting.</summary>
         internal const int AbsoluteMaxCommandsPerBatch = 100;
 
+        /// <summary>Default emit interval for telemetry (number of normalization calls between emissions).</summary>
+        private const int DefaultTelemetryEmitInterval = 200;
+
+        /// <summary>Default sample rate for telemetry (0.0-1.0, 1.0 = always emit, 0.0 = never emit).</summary>
+        private const double DefaultTelemetrySampleRate = 1.0;
+
         /// <summary>
         /// Returns the user-configured max commands per batch, clamped between 1 and <see cref="AbsoluteMaxCommandsPerBatch"/>.
         /// </summary>
@@ -30,6 +51,38 @@ namespace MCPForUnity.Editor.Tools
         {
             int configured = EditorPrefs.GetInt(EditorPrefKeys.BatchExecuteMaxCommands, DefaultMaxCommandsPerBatch);
             return Math.Clamp(configured, 1, AbsoluteMaxCommandsPerBatch);
+        }
+
+        /// <summary>
+        /// Returns user-configured key collision behavior. Defaults to Warn.
+        /// </summary>
+        internal static KeyCollisionBehavior GetKeyCollisionBehavior()
+        {
+            int configured = EditorPrefs.GetInt(EditorPrefKeys.BatchExecuteKeyCollisionBehavior, (int)KeyCollisionBehavior.Warn);
+            if (Enum.IsDefined(typeof(KeyCollisionBehavior), configured))
+            {
+                return (KeyCollisionBehavior)configured;
+            }
+            return KeyCollisionBehavior.Warn;
+        }
+
+        /// <summary>
+        /// Returns user-configured telemetry emit interval. Defaults to <see cref="DefaultTelemetryEmitInterval"/>.
+        /// A value of 0 or negative disables telemetry emission.
+        /// </summary>
+        internal static int GetTelemetryEmitInterval()
+        {
+            int configured = EditorPrefs.GetInt(EditorPrefKeys.BatchExecuteTelemetryEmitInterval, DefaultTelemetryEmitInterval);
+            return Math.Max(0, configured);
+        }
+
+        /// <summary>
+        /// Returns user-configured telemetry sample rate (0.0-1.0). Defaults to <see cref="DefaultTelemetrySampleRate"/>.
+        /// </summary>
+        internal static double GetTelemetrySampleRate()
+        {
+            float configured = EditorPrefs.GetFloat(EditorPrefKeys.BatchExecuteTelemetrySampleRate, (float)DefaultTelemetrySampleRate);
+            return Math.Clamp(configured, 0.0, 1.0);
         }
 
         public static async Task<object> HandleCommand(JObject @params)
@@ -234,6 +287,7 @@ namespace MCPForUnity.Editor.Tools
         private static JObject NormalizeObjectRecursive(JObject source)
         {
             NormalizationMetrics.IncrementNormalizedObjects();
+            KeyCollisionBehavior collisionBehavior = GetKeyCollisionBehavior();
             var normalized = new JObject();
             var collisionTracker = new Dictionary<string, string>(); // normalizedKey -> originalKey kept
 
@@ -242,26 +296,29 @@ namespace MCPForUnity.Editor.Tools
                 string originalKey = property.Name;
                 string targetKey = ShouldPreserveKey(originalKey) ? originalKey : ToCamelCase(originalKey);
 
-                // Handle key collision: prefer keys that were already camelCase
+                // Handle key collision based on configured behavior
                 if (normalized.ContainsKey(targetKey))
                 {
                     NormalizationMetrics.IncrementKeyCollisions();
                     string previousOriginal = collisionTracker[targetKey];
                     bool previousWasCamelCase = previousOriginal == targetKey;
                     bool currentIsCamelCase = originalKey == targetKey;
+                    string message;
 
                     if (currentIsCamelCase && !previousWasCamelCase)
                     {
                         NormalizationMetrics.IncrementCamelCaseCollisionWins();
                         // Current key is explicitly camelCase, replace previous
-                        McpLog.Warn($"BatchExecute key collision: '{targetKey}' from '{previousOriginal}' replaced by '{originalKey}' (explicit camelCase preferred)");
+                        message = $"BatchExecute key collision: '{targetKey}' from '{previousOriginal}' replaced by '{originalKey}' (explicit camelCase preferred)";
+                        HandleCollision(message, collisionBehavior);
                         normalized[targetKey] = NormalizeValueRecursive(property.Value);
                         collisionTracker[targetKey] = originalKey;
                     }
                     else
                     {
-                        // Keep previous, warn about dropped key
-                        McpLog.Warn($"BatchExecute key collision: '{originalKey}' normalizes to '{targetKey}' but key already exists from '{previousOriginal}'");
+                        // Keep previous, report collision
+                        message = $"BatchExecute key collision: '{originalKey}' normalizes to '{targetKey}' but key already exists from '{previousOriginal}'";
+                        HandleCollision(message, collisionBehavior);
                     }
                 }
                 else
@@ -271,6 +328,24 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
             return normalized;
+        }
+
+        /// <summary>
+        /// Handles key collision according to the configured behavior.
+        /// </summary>
+        private static void HandleCollision(string message, KeyCollisionBehavior behavior)
+        {
+            switch (behavior)
+            {
+                case KeyCollisionBehavior.Warn:
+                    McpLog.Warn(message);
+                    break;
+                case KeyCollisionBehavior.Error:
+                    McpLog.Error(message);
+                    break;
+                case KeyCollisionBehavior.Throw:
+                    throw new InvalidOperationException(message);
+            }
         }
 
         /// <summary>
@@ -333,7 +408,7 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static class NormalizationMetrics
         {
-            private const int EmitInterval = 200;
+            private static readonly Random s_random = new Random();
             private static long s_totalNormalizeCalls;
             private static long s_totalNormalizedObjects;
             private static long s_totalPreservedKeys;
@@ -351,7 +426,25 @@ namespace MCPForUnity.Editor.Tools
             public static void MaybeEmitMetrics()
             {
                 long totalCalls = Interlocked.Increment(ref s_totalNormalizeCalls);
-                if (totalCalls % EmitInterval != 0)
+
+                // Get configuration values
+                int emitInterval = GetTelemetryEmitInterval();
+                double sampleRate = GetTelemetrySampleRate();
+
+                // Skip if telemetry is disabled (interval = 0)
+                if (emitInterval <= 0)
+                {
+                    return;
+                }
+
+                // Skip if not at the configured interval
+                if (totalCalls % emitInterval != 0)
+                {
+                    return;
+                }
+
+                // Skip based on sample rate (0.0 = never, 1.0 = always)
+                if (sampleRate < 1.0 && s_random.NextDouble() >= sampleRate)
                 {
                     return;
                 }
@@ -364,12 +457,15 @@ namespace MCPForUnity.Editor.Tools
                     ["preserved_keys"] = stats["preservedKeys"],
                     ["key_collisions"] = stats["keyCollisions"],
                     ["camel_case_collision_wins"] = stats["camelCaseCollisionWins"],
+                    ["emit_interval"] = emitInterval,
+                    ["sample_rate"] = sampleRate,
                 });
 
                 McpLog.Debug(
                     $"BatchExecute key normalization stats: calls={stats["normalizeCalls"]}, " +
                     $"objects={stats["normalizedObjects"]}, preserved={stats["preservedKeys"]}, " +
-                    $"collisions={stats["keyCollisions"]}, camelWins={stats["camelCaseCollisionWins"]}");
+                    $"collisions={stats["keyCollisions"]}, camelWins={stats["camelCaseCollisionWins"]}, " +
+                    $"interval={emitInterval}, sampleRate={sampleRate:F2}");
             }
 
             public static IReadOnlyDictionary<string, long> GetStats()
