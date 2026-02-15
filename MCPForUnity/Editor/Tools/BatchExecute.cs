@@ -348,9 +348,6 @@ namespace MCPForUnity.Editor.Tools
 
             public static void IncrementCamelCaseCollisionWins() => Interlocked.Increment(ref s_totalCamelCaseCollisionWins);
 
-            /// <summary>
-            /// 
-            /// </summary>
             public static void MaybeEmitMetrics()
             {
                 long totalCalls = Interlocked.Increment(ref s_totalNormalizeCalls);
